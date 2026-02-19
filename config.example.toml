@@ -1,0 +1,13 @@
+# Agora server configuration
+
+[server]
+# Address and port to listen on
+bind = "127.0.0.1:8008"
+# Server name (used in Matrix user/room IDs, e.g. @alice:localhost)
+server_name = "localhost"
+
+[database]
+# "sqlite" or "postgres"
+backend = "sqlite"
+# SQLite path (relative to working directory) or PostgreSQL connection URI
+uri = "agora.db"
