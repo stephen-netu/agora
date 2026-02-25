@@ -71,6 +71,8 @@ pub struct CreateRoomRequest {
     pub is_direct: Option<bool>,
     #[serde(default)]
     pub invite: Vec<UserId>,
+    #[serde(default)]
+    pub creation_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -171,6 +173,61 @@ pub struct RoomState {
 }
 
 // ---------------------------------------------------------------------------
+// Spaces: /hierarchy
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct HierarchyQuery {
+    #[serde(default = "default_hierarchy_limit")]
+    pub limit: u64,
+    #[serde(default = "default_max_depth")]
+    pub max_depth: u64,
+    #[serde(default)]
+    pub suggested_only: bool,
+}
+
+fn default_hierarchy_limit() -> u64 {
+    50
+}
+
+fn default_max_depth() -> u64 {
+    5
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HierarchyResponse {
+    pub rooms: Vec<HierarchyRoom>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HierarchyRoom {
+    pub room_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+    pub num_joined_members: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room_type: Option<String>,
+    pub children_state: Vec<RoomEvent>,
+}
+
+// ---------------------------------------------------------------------------
+// Media: /upload, /download, /config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MediaUploadResponse {
+    pub content_uri: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MediaConfigResponse {
+    #[serde(rename = "m.upload.size")]
+    pub m_upload_size: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
 // Error response (Matrix standard format)
 // ---------------------------------------------------------------------------
 
@@ -191,4 +248,5 @@ pub mod errcode {
     pub const UNKNOWN_TOKEN: &str = "M_UNKNOWN_TOKEN";
     pub const INVALID_PARAM: &str = "M_INVALID_PARAM";
     pub const NOT_JSON: &str = "M_NOT_JSON";
+    pub const TOO_LARGE: &str = "M_TOO_LARGE";
 }

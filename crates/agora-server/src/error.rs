@@ -52,6 +52,14 @@ impl ApiError {
             message,
         )
     }
+
+    pub fn too_large(message: impl Into<String>) -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            agora_core::api::errcode::TOO_LARGE,
+            message,
+        )
+    }
 }
 
 impl IntoResponse for ApiError {

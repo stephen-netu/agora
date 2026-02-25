@@ -45,6 +45,10 @@ pub mod msgtype {
     pub const TEXT: &str = "m.text";
     pub const NOTICE: &str = "m.notice";
     pub const EMOTE: &str = "m.emote";
+    pub const IMAGE: &str = "m.image";
+    pub const FILE: &str = "m.file";
+    pub const AUDIO: &str = "m.audio";
+    pub const VIDEO: &str = "m.video";
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,39 @@ pub mod event_type {
     pub const TOPIC: &str = "m.room.topic";
     pub const MEMBER: &str = "m.room.member";
     pub const CREATE: &str = "m.room.create";
+    pub const AVATAR: &str = "m.room.avatar";
+    pub const SPACE_CHILD: &str = "m.space.child";
+    pub const SPACE_PARENT: &str = "m.space.parent";
+}
+
+pub const ROOM_TYPE_SPACE: &str = "m.space";
+
+// ---------------------------------------------------------------------------
+// Space-related state event content types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceChildContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceParentContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<Vec<String>>,
+    #[serde(default)]
+    pub canonical: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoomAvatarContent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

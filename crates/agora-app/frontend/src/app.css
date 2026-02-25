@@ -1,0 +1,182 @@
+/* ── Reset ─────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+html, body, #app {
+	height: 100%;
+}
+
+body {
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
+		Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	background: var(--bg);
+	color: var(--text);
+	transition: background 0.2s, color 0.2s;
+}
+
+a {
+	color: var(--accent);
+}
+
+/* ── Light theme ──────────────────────────────────────────────────── */
+
+[data-theme='light'] {
+	--bg: #ffffff;
+	--bg-secondary: #f8f9fa;
+	--surface: #f0f0f0;
+	--surface-hover: #e4e4e4;
+	--border: #d8d8d8;
+	--text: #1a1a1a;
+	--text-secondary: #666666;
+	--text-muted: #999999;
+	--accent: #0066cc;
+	--accent-hover: #0052a3;
+	--accent-text: #ffffff;
+	--danger: #cc3333;
+	--danger-hover: #a32929;
+	--input-bg: #ffffff;
+	--input-border: #cccccc;
+	--shadow: rgba(0, 0, 0, 0.08);
+	--overlay: rgba(0, 0, 0, 0.4);
+	--message-own: #e3f2fd;
+	--scrollbar-thumb: #c0c0c0;
+	--scrollbar-track: #f0f0f0;
+}
+
+/* ── Dark theme ───────────────────────────────────────────────────── */
+
+[data-theme='dark'] {
+	--bg: #1a1a1a;
+	--bg-secondary: #151515;
+	--surface: #252525;
+	--surface-hover: #303030;
+	--border: #333333;
+	--text: #e0e0e0;
+	--text-secondary: #999999;
+	--text-muted: #666666;
+	--accent: #4da6ff;
+	--accent-hover: #6bb8ff;
+	--accent-text: #0a0a0a;
+	--danger: #ff5555;
+	--danger-hover: #ff7777;
+	--input-bg: #2a2a2a;
+	--input-border: #404040;
+	--shadow: rgba(0, 0, 0, 0.3);
+	--overlay: rgba(0, 0, 0, 0.6);
+	--message-own: #1a3a5c;
+	--scrollbar-thumb: #444444;
+	--scrollbar-track: #1a1a1a;
+}
+
+/* ── Seraphim theme ───────────────────────────────────────────────── */
+
+[data-theme='seraphim'] {
+	--bg: #0a0a0a;
+	--bg-secondary: #050505;
+	--surface: #1a1a1a;
+	--surface-hover: #222222;
+	--border: #2a2a2a;
+	--text: #e8e8e8;
+	--text-secondary: #aaaaaa;
+	--text-muted: #666666;
+	--accent: #ff6600;
+	--accent-hover: #ff8833;
+	--accent-text: #0a0a0a;
+	--danger: #ff4444;
+	--danger-hover: #ff6666;
+	--input-bg: #151515;
+	--input-border: #333333;
+	--shadow: rgba(255, 102, 0, 0.06);
+	--overlay: rgba(0, 0, 0, 0.7);
+	--message-own: #1a1200;
+	--scrollbar-thumb: #ff660044;
+	--scrollbar-track: #0a0a0a;
+}
+
+/* ── Scrollbar styling ────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+	width: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--scrollbar-thumb);
+	border-radius: 4px;
+}
+
+/* ── Utility classes ──────────────────────────────────────────────── */
+
+button {
+	cursor: pointer;
+	border: none;
+	border-radius: 6px;
+	padding: 8px 16px;
+	font-size: 0.875rem;
+	font-weight: 500;
+	transition: background 0.15s, opacity 0.15s;
+}
+
+button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.btn-primary {
+	background: var(--accent);
+	color: var(--accent-text);
+}
+
+.btn-primary:hover:not(:disabled) {
+	background: var(--accent-hover);
+}
+
+.btn-secondary {
+	background: var(--surface);
+	color: var(--text);
+	border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background: var(--surface-hover);
+}
+
+.btn-danger {
+	background: var(--danger);
+	color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+	background: var(--danger-hover);
+}
+
+input[type='text'],
+input[type='password'],
+textarea {
+	width: 100%;
+	padding: 10px 12px;
+	font-size: 0.875rem;
+	background: var(--input-bg);
+	color: var(--text);
+	border: 1px solid var(--input-border);
+	border-radius: 6px;
+	outline: none;
+	transition: border-color 0.15s;
+}
+
+input[type='text']:focus,
+input[type='password']:focus,
+textarea:focus {
+	border-color: var(--accent);
+}

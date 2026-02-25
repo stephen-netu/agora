@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use agora_core::api::*;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
@@ -26,8 +28,19 @@ impl AgoraClient {
         self.access_token.as_deref()
     }
 
+    pub fn server_name(&self) -> &str {
+        self.base_url
+            .strip_prefix("http://")
+            .or_else(|| self.base_url.strip_prefix("https://"))
+            .unwrap_or(&self.base_url)
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}/_matrix/client{}", self.base_url, path)
+    }
+
+    fn media_url(&self, path: &str) -> String {
+        format!("{}/_matrix/media{}", self.base_url, path)
     }
 
     fn auth_header(&self) -> Result<String, CliClientError> {
@@ -115,6 +128,28 @@ impl AgoraClient {
         name: Option<&str>,
         topic: Option<&str>,
     ) -> Result<CreateRoomResponse, CliClientError> {
+        self.create_room_with_options(name, topic, None).await
+    }
+
+    pub async fn create_space(
+        &self,
+        name: Option<&str>,
+        topic: Option<&str>,
+    ) -> Result<CreateRoomResponse, CliClientError> {
+        self.create_room_with_options(
+            name,
+            topic,
+            Some(serde_json::json!({ "type": "m.space" })),
+        )
+        .await
+    }
+
+    async fn create_room_with_options(
+        &self,
+        name: Option<&str>,
+        topic: Option<&str>,
+        creation_content: Option<serde_json::Value>,
+    ) -> Result<CreateRoomResponse, CliClientError> {
         let auth = self.auth_header()?;
         let mut body = serde_json::Map::new();
         if let Some(n) = name {
@@ -122,6 +157,9 @@ impl AgoraClient {
         }
         if let Some(t) = topic {
             body.insert("topic".into(), serde_json::Value::String(t.to_owned()));
+        }
+        if let Some(cc) = creation_content {
+            body.insert("creation_content".into(), cc);
         }
 
         let resp = self
@@ -237,6 +275,54 @@ impl AgoraClient {
         Self::parse_response(resp).await
     }
 
+    // -- State events --------------------------------------------------------
+
+    pub async fn set_state_event(
+        &self,
+        room_id: &str,
+        event_type: &str,
+        state_key: &str,
+        content: serde_json::Value,
+    ) -> Result<SendEventResponse, CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .put(self.url(&format!(
+                "/v3/rooms/{}/state/{}/{}",
+                urlencoding(room_id),
+                urlencoding(event_type),
+                urlencoding(state_key),
+            )))
+            .header("Authorization", auth)
+            .json(&content)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Self::parse_response(resp).await
+    }
+
+    // -- Hierarchy -----------------------------------------------------------
+
+    pub async fn get_hierarchy(
+        &self,
+        space_id: &str,
+    ) -> Result<HierarchyResponse, CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .get(self.url(&format!(
+                "/v1/rooms/{}/hierarchy",
+                urlencoding(space_id)
+            )))
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Self::parse_response(resp).await
+    }
+
     // -- Sync ----------------------------------------------------------------
 
     pub async fn sync(
@@ -261,6 +347,80 @@ impl AgoraClient {
 
         Self::parse_response(resp).await
     }
+
+    // -- Media ---------------------------------------------------------------
+
+    /// Upload a file and return its `mxc://` content URI.
+    pub async fn upload_file(&self, path: &Path) -> Result<String, CliClientError> {
+        let auth = self.auth_header()?;
+        let data = tokio::fs::read(path).await.map_err(|e| {
+            CliClientError::Io(format!("failed to read {}: {e}", path.display()))
+        })?;
+
+        let content_type = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+
+        let filename = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+
+        let mut url = self.media_url("/v3/upload");
+        if let Some(ref name) = filename {
+            url = format!("{}?filename={}", url, urlencoding(name));
+        }
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", auth)
+            .header("Content-Type", content_type)
+            .body(data)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        let result: MediaUploadResponse = Self::parse_response(resp).await?;
+        Ok(result.content_uri)
+    }
+
+    /// Download media by `mxc://` URI to a local file path.
+    pub async fn download_file(
+        &self,
+        mxc_uri: &str,
+        dest: &Path,
+    ) -> Result<(), CliClientError> {
+        let auth = self.auth_header()?;
+        let stripped = mxc_uri
+            .strip_prefix("mxc://")
+            .ok_or_else(|| CliClientError::Io("invalid mxc:// URI".into()))?;
+
+        let url = self.media_url(&format!("/v3/download/{stripped}"));
+
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CliClientError::Server {
+                status: status.as_u16(),
+                body,
+            });
+        }
+
+        let bytes = resp.bytes().await.map_err(CliClientError::Http)?;
+        tokio::fs::write(dest, &bytes).await.map_err(|e| {
+            CliClientError::Io(format!("failed to write {}: {e}", dest.display()))
+        })?;
+
+        Ok(())
+    }
 }
 
 fn urlencoding(s: &str) -> String {
@@ -279,4 +439,6 @@ pub enum CliClientError {
     Server { status: u16, body: String },
     #[error("not logged in — use `agora login` first")]
     NotLoggedIn,
+    #[error("I/O error: {0}")]
+    Io(String),
 }

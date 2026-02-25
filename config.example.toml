@@ -11,3 +11,9 @@ server_name = "localhost"
 backend = "sqlite"
 # SQLite path (relative to working directory) or PostgreSQL connection URI
 uri = "agora.db"
+
+[media]
+# Directory for uploaded file storage (relative to working directory)
+store_path = "media_store"
+# Maximum upload size in bytes (50 MiB)
+max_upload_bytes = 52428800

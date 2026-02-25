@@ -37,6 +37,9 @@ enum Commands {
     /// Room management
     #[command(subcommand)]
     Rooms(RoomCommands),
+    /// Space management
+    #[command(subcommand)]
+    Spaces(SpaceCommands),
     /// Send a message to a room
     Send {
         /// Room ID (e.g. !abc123:localhost)
@@ -53,6 +56,19 @@ enum Commands {
         /// Number of messages to show
         #[arg(short, long, default_value = "20")]
         limit: u64,
+    },
+    /// Upload a file and get its mxc:// URI
+    Upload {
+        /// Path to the file to upload
+        file: PathBuf,
+    },
+    /// Download media by mxc:// URI
+    Download {
+        /// mxc:// URI to download
+        uri: String,
+        /// Destination path (defaults to original filename or "download")
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Launch interactive TUI
     Connect,
@@ -78,6 +94,42 @@ enum RoomCommands {
         room: String,
     },
     /// List joined rooms (via initial sync)
+    List,
+}
+
+#[derive(Subcommand)]
+enum SpaceCommands {
+    /// Create a new space
+    Create {
+        #[arg(short, long)]
+        name: Option<String>,
+        #[arg(short, long)]
+        topic: Option<String>,
+    },
+    /// Add a room as a child of a space
+    AddChild {
+        /// Space ID
+        #[arg(short, long)]
+        space: String,
+        /// Room ID to add
+        #[arg(short, long)]
+        room: String,
+    },
+    /// Remove a room from a space
+    RemoveChild {
+        /// Space ID
+        #[arg(short, long)]
+        space: String,
+        /// Room ID to remove
+        #[arg(short, long)]
+        room: String,
+    },
+    /// Show the room hierarchy under a space
+    Hierarchy {
+        /// Space ID
+        space: String,
+    },
+    /// List joined spaces
     List,
 }
 
@@ -183,6 +235,80 @@ async fn run(
             }
         },
 
+        Commands::Spaces(sub) => match sub {
+            SpaceCommands::Create { name, topic } => {
+                let resp = client
+                    .create_space(name.as_deref(), topic.as_deref())
+                    .await?;
+                println!("created space: {}", resp.room_id);
+            }
+            SpaceCommands::AddChild { space, room } => {
+                client
+                    .set_state_event(
+                        &space,
+                        "m.space.child",
+                        &room,
+                        serde_json::json!({ "via": [client.server_name()] }),
+                    )
+                    .await?;
+                println!("added {} to space {}", room, space);
+            }
+            SpaceCommands::RemoveChild { space, room } => {
+                client
+                    .set_state_event(&space, "m.space.child", &room, serde_json::json!({}))
+                    .await?;
+                println!("removed {} from space {}", room, space);
+            }
+            SpaceCommands::Hierarchy { space } => {
+                let resp = client.get_hierarchy(&space).await?;
+                if resp.rooms.is_empty() {
+                    println!("empty space");
+                } else {
+                    for room in &resp.rooms {
+                        let kind = if room.room_type.as_deref() == Some("m.space") {
+                            "[space]"
+                        } else {
+                            "[room]"
+                        };
+                        let name = room.name.as_deref().unwrap_or("(unnamed)");
+                        println!(
+                            "  {} {} {} ({} members)",
+                            kind, room.room_id, name, room.num_joined_members
+                        );
+                    }
+                }
+            }
+            SpaceCommands::List => {
+                let resp = client.sync(None, 0).await?;
+                let mut found = false;
+                for (room_id, room) in &resp.rooms.join {
+                    let is_space = room
+                        .state
+                        .events
+                        .iter()
+                        .find(|e| e.event_type == "m.room.create")
+                        .and_then(|e| e.content.get("type"))
+                        .and_then(|v| v.as_str())
+                        == Some("m.space");
+                    if is_space {
+                        let name = room
+                            .state
+                            .events
+                            .iter()
+                            .find(|e| e.event_type == "m.room.name")
+                            .and_then(|e| e.content.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("(unnamed)");
+                        println!("  {room_id}  {name}");
+                        found = true;
+                    }
+                }
+                if !found {
+                    println!("no joined spaces");
+                }
+            }
+        },
+
         Commands::Send { room, message } => {
             let body = message.join(" ");
             let resp = client.send_message(&room, &body).await?;
@@ -205,6 +331,24 @@ async fn run(
                     println!("<{sender}> {body}");
                 }
             }
+        }
+
+        Commands::Upload { file } => {
+            let uri = client.upload_file(&file).await?;
+            println!("{uri}");
+        }
+
+        Commands::Download { uri, output } => {
+            let dest = output.unwrap_or_else(|| {
+                let name = uri
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("download")
+                    .to_owned();
+                PathBuf::from(if name.is_empty() { "download" } else { &name })
+            });
+            client.download_file(&uri, &dest).await?;
+            println!("saved to {}", dest.display());
         }
 
         Commands::Connect => {

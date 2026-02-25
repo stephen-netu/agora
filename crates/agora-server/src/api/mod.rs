@@ -1,6 +1,8 @@
 pub mod auth;
-pub mod rooms;
 pub mod events;
+pub mod media;
+pub mod rooms;
+pub mod spaces;
 pub mod sync;
 
 use axum::extract::FromRequestParts;
@@ -69,7 +71,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
 /// Build the full API router.
 pub fn router(state: AppState) -> Router {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
 
     let matrix = Router::new()
         // Auth
@@ -80,6 +82,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v3/createRoom", post(rooms::create_room))
         .route("/v3/join/{room_id_or_alias}", post(rooms::join_room))
         .route("/v3/rooms/{room_id}/leave", post(rooms::leave_room))
+        .route("/v3/rooms/{room_id}", delete(rooms::delete_room))
         // Events
         .route(
             "/v3/rooms/{room_id}/send/{event_type}/{txn_id}",
@@ -92,11 +95,23 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v3/rooms/{room_id}/state", get(events::get_all_state))
         // Sync
-        .route("/v3/sync", get(sync::sync));
+        .route("/v3/sync", get(sync::sync))
+        // Spaces
+        .route("/v1/rooms/{room_id}/hierarchy", get(spaces::get_hierarchy));
+
+    let media = Router::new()
+        .route("/v3/upload", post(media::upload))
+        .route("/v3/download/{server_name}/{media_id}", get(media::download))
+        .route(
+            "/v3/download/{server_name}/{media_id}/{filename}",
+            get(media::download),
+        )
+        .route("/v3/config", get(media::config));
 
     Router::new()
         .route("/_matrix/client/versions", get(versions))
         .nest("/_matrix/client", matrix)
+        .nest("/_matrix/media", media)
         .with_state(state)
 }
 

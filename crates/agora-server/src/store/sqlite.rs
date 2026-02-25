@@ -6,7 +6,8 @@ use agora_core::events::RoomEvent;
 use agora_core::identifiers::EventId;
 
 use super::{
-    AccessTokenRecord, RoomMemberRecord, RoomRecord, Storage, StorageError, UserRecord,
+    AccessTokenRecord, MediaRecord, RoomMemberRecord, RoomRecord, Storage, StorageError,
+    UserRecord,
 };
 
 pub struct SqliteStore {
@@ -47,6 +48,7 @@ impl SqliteStore {
                 topic TEXT,
                 creator TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
+                room_type TEXT,
                 FOREIGN KEY (creator) REFERENCES users(user_id)
             )",
             "CREATE TABLE IF NOT EXISTS room_members (
@@ -77,6 +79,17 @@ impl SqliteStore {
                 WHERE state_key IS NOT NULL",
             "CREATE INDEX IF NOT EXISTS idx_room_members_user
                 ON room_members(user_id, membership)",
+            "CREATE TABLE IF NOT EXISTS media (
+                media_id TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                uploader TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                upload_name TEXT,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (server_name, media_id),
+                FOREIGN KEY (uploader) REFERENCES users(user_id)
+            )",
         ];
 
         for sql in &statements {
@@ -175,13 +188,14 @@ impl Storage for SqliteStore {
 
     async fn create_room(&self, room: &RoomRecord) -> Result<(), StorageError> {
         sqlx::query(
-            "INSERT INTO rooms (room_id, name, topic, creator, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO rooms (room_id, name, topic, creator, created_at, room_type) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&room.room_id)
         .bind(&room.name)
         .bind(&room.topic)
         .bind(&room.creator)
         .bind(room.created_at)
+        .bind(&room.room_type)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -190,7 +204,7 @@ impl Storage for SqliteStore {
 
     async fn get_room(&self, room_id: &str) -> Result<Option<RoomRecord>, StorageError> {
         let row = sqlx::query(
-            "SELECT room_id, name, topic, creator, created_at FROM rooms WHERE room_id = ?",
+            "SELECT room_id, name, topic, creator, created_at, room_type FROM rooms WHERE room_id = ?",
         )
         .bind(room_id)
         .fetch_optional(&self.pool)
@@ -203,7 +217,27 @@ impl Storage for SqliteStore {
             topic: r.get("topic"),
             creator: r.get("creator"),
             created_at: r.get("created_at"),
+            room_type: r.get("room_type"),
         }))
+    }
+
+    async fn delete_room(&self, room_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM events WHERE room_id = ?")
+            .bind(room_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        sqlx::query("DELETE FROM room_members WHERE room_id = ?")
+            .bind(room_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        sqlx::query("DELETE FROM rooms WHERE room_id = ?")
+            .bind(room_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
     }
 
     // -- Room membership -----------------------------------------------------
@@ -282,6 +316,18 @@ impl Storage for SqliteStore {
                 origin_server_ts: r.get("origin_server_ts"),
             })
             .collect())
+    }
+
+    async fn count_room_members(&self, room_id: &str) -> Result<u64, StorageError> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS cnt FROM room_members WHERE room_id = ? AND membership = 'join'",
+        )
+        .bind(room_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.get::<i64, _>("cnt") as u64)
     }
 
     // -- Events --------------------------------------------------------------
@@ -397,6 +443,52 @@ impl Storage for SqliteStore {
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(row.get("max_ord"))
+    }
+
+    // -- Media ---------------------------------------------------------------
+
+    async fn store_media(&self, record: &MediaRecord) -> Result<(), StorageError> {
+        sqlx::query(
+            "INSERT INTO media (media_id, server_name, uploader, content_type, file_size, upload_name, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&record.media_id)
+        .bind(&record.server_name)
+        .bind(&record.uploader)
+        .bind(&record.content_type)
+        .bind(record.file_size)
+        .bind(&record.upload_name)
+        .bind(record.created_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_media(
+        &self,
+        server_name: &str,
+        media_id: &str,
+    ) -> Result<Option<MediaRecord>, StorageError> {
+        let row = sqlx::query(
+            "SELECT media_id, server_name, uploader, content_type, file_size, upload_name, created_at
+             FROM media WHERE server_name = ? AND media_id = ?",
+        )
+        .bind(server_name)
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| MediaRecord {
+            media_id: r.get("media_id"),
+            server_name: r.get("server_name"),
+            uploader: r.get("uploader"),
+            content_type: r.get("content_type"),
+            file_size: r.get("file_size"),
+            upload_name: r.get("upload_name"),
+            created_at: r.get("created_at"),
+        }))
     }
 }
 

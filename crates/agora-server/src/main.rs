@@ -38,13 +38,29 @@ async fn main() -> anyhow::Result<()> {
 
     let store = SqliteStore::open(&db_uri).await?;
 
+    let media_path = std::path::PathBuf::from(&config.media.store_path);
+    tokio::fs::create_dir_all(&media_path).await?;
+    tracing::info!(path = %media_path.display(), "media store ready");
+
     let app_state = AppState {
         store: Arc::new(store),
         server_name: config.server.server_name,
         sync_engine: Arc::new(SyncEngine::new()),
+        media_path,
+        max_upload_bytes: config.media.max_upload_bytes,
     };
 
-    let app = api::router(app_state);
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any)
+        .expose_headers(tower_http::cors::Any);
+
+    let body_limit = axum::extract::DefaultBodyLimit::max(
+        config.media.max_upload_bytes as usize + 4096, // headroom for headers
+    );
+
+    let app = api::router(app_state).layer(cors).layer(body_limit);
 
     let listener = tokio::net::TcpListener::bind(&config.server.bind).await?;
     tracing::info!(addr = %config.server.bind, "listening");

@@ -30,6 +30,7 @@ pub struct RoomRecord {
     pub topic: Option<String>,
     pub creator: String,
     pub created_at: i64,
+    pub room_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,17 @@ pub struct RoomMemberRecord {
     pub user_id: String,
     pub membership: String,
     pub origin_server_ts: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaRecord {
+    pub media_id: String,
+    pub server_name: String,
+    pub uploader: String,
+    pub content_type: String,
+    pub file_size: i64,
+    pub upload_name: Option<String>,
+    pub created_at: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +71,8 @@ pub trait Storage: Send + Sync + 'static {
     async fn create_room(&self, room: &RoomRecord) -> Result<(), StorageError>;
     async fn get_room(&self, room_id: &str) -> Result<Option<RoomRecord>, StorageError>;
 
+    async fn delete_room(&self, room_id: &str) -> Result<(), StorageError>;
+
     // -- Room membership -----------------------------------------------------
     async fn set_membership(
         &self,
@@ -77,6 +91,8 @@ pub trait Storage: Send + Sync + 'static {
     async fn get_joined_rooms(&self, user_id: &str) -> Result<Vec<String>, StorageError>;
 
     async fn get_room_members(&self, room_id: &str) -> Result<Vec<RoomMemberRecord>, StorageError>;
+
+    async fn count_room_members(&self, room_id: &str) -> Result<u64, StorageError>;
 
     // -- Events --------------------------------------------------------------
     async fn store_event(&self, event: &RoomEvent) -> Result<i64, StorageError>;
@@ -101,6 +117,15 @@ pub trait Storage: Send + Sync + 'static {
     ) -> Result<Vec<RoomEvent>, StorageError>;
 
     async fn get_max_stream_ordering(&self) -> Result<i64, StorageError>;
+
+    // -- Media ---------------------------------------------------------------
+    async fn store_media(&self, record: &MediaRecord) -> Result<(), StorageError>;
+
+    async fn get_media(
+        &self,
+        server_name: &str,
+        media_id: &str,
+    ) -> Result<Option<MediaRecord>, StorageError>;
 }
 
 #[derive(Debug, thiserror::Error)]

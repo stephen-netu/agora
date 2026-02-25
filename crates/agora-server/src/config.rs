@@ -4,6 +4,8 @@ use serde::Deserialize;
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
+    #[serde(default)]
+    pub media: MediaConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -16,6 +18,31 @@ pub struct ServerConfig {
 pub struct DatabaseConfig {
     pub backend: String,
     pub uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediaConfig {
+    #[serde(default = "default_media_store_path")]
+    pub store_path: String,
+    #[serde(default = "default_max_upload_bytes")]
+    pub max_upload_bytes: u64,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            store_path: default_media_store_path(),
+            max_upload_bytes: default_max_upload_bytes(),
+        }
+    }
+}
+
+fn default_media_store_path() -> String {
+    "media_store".to_owned()
+}
+
+fn default_max_upload_bytes() -> u64 {
+    50 * 1024 * 1024 // 50 MiB
 }
 
 impl Config {
@@ -46,6 +73,7 @@ impl Config {
                 backend: "sqlite".to_owned(),
                 uri: "sqlite:agora.db?mode=rwc".to_owned(),
             },
+            media: MediaConfig::default(),
         })
     }
 }

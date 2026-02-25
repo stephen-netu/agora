@@ -26,6 +26,13 @@ pub async fn create_room(
     let room_id = RoomId::new(&state.server_name);
     let now = now_millis();
 
+    let room_type = req
+        .creation_content
+        .as_ref()
+        .and_then(|cc| cc.get("type"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_owned());
+
     state
         .store
         .create_room(&RoomRecord {
@@ -34,6 +41,7 @@ pub async fn create_room(
             topic: req.topic.clone(),
             creator: user_id.as_str().to_owned(),
             created_at: now as i64,
+            room_type: room_type.clone(),
         })
         .await?;
 
@@ -43,14 +51,23 @@ pub async fn create_room(
         .set_membership(room_id.as_str(), user_id.as_str(), "join", now as i64)
         .await?;
 
-    // Store m.room.create state event.
+    // Build m.room.create content, merging creation_content if provided.
+    let mut create_content = serde_json::json!({ "creator": user_id.as_str() });
+    if let Some(cc) = &req.creation_content {
+        if let (Some(base), Some(extra)) = (create_content.as_object_mut(), cc.as_object()) {
+            for (k, v) in extra {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
     let create_event = RoomEvent {
         event_id: EventId::new(),
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::CREATE.to_owned(),
         state_key: Some(String::new()),
-        content: serde_json::json!({ "creator": user_id.as_str() }),
+        content: create_content,
         origin_server_ts: now,
         stream_ordering: None,
     };
@@ -113,6 +130,30 @@ pub async fn create_room(
     tracing::info!(%user_id, %room_id, "room created");
 
     Ok(Json(CreateRoomResponse { room_id }))
+}
+
+/// DELETE /_matrix/client/v3/rooms/{roomId}
+/// Agora extension: only the room creator can delete a room.
+pub async fn delete_room(
+    State(state): State<AppState>,
+    AuthUser(user_id, _): AuthUser,
+    Path(room_id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let room = state
+        .store
+        .get_room(&room_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("room not found"))?;
+
+    if room.creator != user_id.as_str() {
+        return Err(ApiError::forbidden("only the room creator can delete it"));
+    }
+
+    state.store.delete_room(&room_id).await?;
+
+    tracing::info!(%user_id, room_id, "room deleted");
+
+    Ok(Json(serde_json::json!({})))
 }
 
 /// POST /_matrix/client/v3/join/{roomIdOrAlias}
