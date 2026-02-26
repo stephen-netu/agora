@@ -52,6 +52,36 @@ pub struct MediaRecord {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DeviceKeysRecord {
+    pub user_id: String,
+    pub device_id: String,
+    pub algorithms_json: String,
+    pub keys_json: String,
+    pub signatures_json: String,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct OneTimeKeyRecord {
+    pub user_id: String,
+    pub device_id: String,
+    pub key_id: String,
+    pub algorithm: String,
+    pub key_data: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToDeviceRecord {
+    pub id: i64,
+    pub recipient_user: String,
+    pub recipient_device: String,
+    pub sender: String,
+    pub event_type: String,
+    pub content_json: String,
+    pub created_at: i64,
+}
+
 // ---------------------------------------------------------------------------
 // Storage trait — implemented for each backend
 // ---------------------------------------------------------------------------
@@ -126,6 +156,47 @@ pub trait Storage: Send + Sync + 'static {
         server_name: &str,
         media_id: &str,
     ) -> Result<Option<MediaRecord>, StorageError>;
+
+    // -- E2EE: Device keys ---------------------------------------------------
+    async fn upsert_device_keys(&self, record: &DeviceKeysRecord) -> Result<(), StorageError>;
+
+    async fn get_device_keys(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<Option<DeviceKeysRecord>, StorageError>;
+
+    async fn get_device_keys_for_users(
+        &self,
+        user_device_pairs: &[(String, Vec<String>)],
+    ) -> Result<Vec<DeviceKeysRecord>, StorageError>;
+
+    // -- E2EE: One-time keys -------------------------------------------------
+    async fn store_one_time_keys(&self, keys: &[OneTimeKeyRecord]) -> Result<(), StorageError>;
+
+    async fn claim_one_time_key(
+        &self,
+        user_id: &str,
+        device_id: &str,
+        algorithm: &str,
+    ) -> Result<Option<OneTimeKeyRecord>, StorageError>;
+
+    async fn count_one_time_keys(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<std::collections::HashMap<String, u64>, StorageError>;
+
+    // -- E2EE: To-device messages --------------------------------------------
+    async fn queue_to_device(&self, records: &[ToDeviceRecord]) -> Result<(), StorageError>;
+
+    async fn get_to_device_messages(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<Vec<ToDeviceRecord>, StorageError>;
+
+    async fn delete_to_device_messages(&self, ids: &[i64]) -> Result<(), StorageError>;
 }
 
 #[derive(Debug, thiserror::Error)]

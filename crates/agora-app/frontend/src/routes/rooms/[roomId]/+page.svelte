@@ -2,8 +2,9 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type RoomEvent } from '$lib/api';
-	import { auth } from '$lib/stores/auth';
+	import { auth, type AuthState } from '$lib/stores/auth';
 	import { rooms, type Room } from '$lib/stores/rooms';
+	import { ensureRoomKeysShared, encryptMessage } from '$lib/crypto';
 	import MessageList from '$lib/components/MessageList.svelte';
 	import MessageInput from '$lib/components/MessageInput.svelte';
 
@@ -37,7 +38,19 @@
 	async function handleSend(text: string) {
 		sending = true;
 		try {
-			await api.sendMessage(roomId, text);
+			if (room?.encrypted) {
+				const userId = authState.userId ?? '';
+				await ensureRoomKeysShared(roomId, [userId]);
+				const encrypted = await encryptMessage(roomId, 'm.room.message', {
+					msgtype: 'm.text',
+					body: text
+				});
+				if (encrypted) {
+					await api.sendEvent(roomId, 'm.room.encrypted', encrypted as unknown as Record<string, unknown>);
+				}
+			} else {
+				await api.sendMessage(roomId, text);
+			}
 		} catch (e) {
 			console.error('Failed to send message:', e);
 		} finally {
@@ -51,16 +64,23 @@
 			const mxcUri = await api.uploadFile(file);
 			const isImage = file.type.startsWith('image/');
 			const msgtype = isImage ? 'm.image' : 'm.file';
-
-			await api.sendEvent(roomId, 'm.room.message', {
+			const content = {
 				msgtype,
 				body: file.name,
 				url: mxcUri,
-				info: {
-					mimetype: file.type,
-					size: file.size
+				info: { mimetype: file.type, size: file.size }
+			};
+
+			if (room?.encrypted) {
+				const userId = authState.userId ?? '';
+				await ensureRoomKeysShared(roomId, [userId]);
+				const encrypted = await encryptMessage(roomId, 'm.room.message', content);
+				if (encrypted) {
+					await api.sendEvent(roomId, 'm.room.encrypted', encrypted as unknown as Record<string, unknown>);
 				}
-			});
+			} else {
+				await api.sendEvent(roomId, 'm.room.message', content);
+			}
 		} catch (e) {
 			console.error('Failed to upload file:', e);
 		} finally {
@@ -68,7 +88,7 @@
 		}
 	}
 
-	let authState = $state({ token: null as string | null, userId: null as string | null, loading: false });
+	let authState: AuthState = $state({ token: null, userId: null, deviceId: null, loading: false });
 	auth.subscribe((v) => (authState = v));
 
 	async function handleLeave() {
@@ -97,7 +117,10 @@
 <div class="chat-view">
 	<div class="chat-header">
 		<div class="chat-info">
-			<h2>{room?.name ?? '...'}</h2>
+			<h2>
+				{#if room?.encrypted}<span class="lock-icon" title="End-to-end encrypted">&#128274;</span>{/if}
+				{room?.name ?? '...'}
+			</h2>
 			{#if room?.topic}
 				<span class="topic">{room.topic}</span>
 			{/if}
@@ -108,7 +131,7 @@
 		</div>
 	</div>
 
-	<MessageList {messages} />
+	<MessageList {messages} encrypted={room?.encrypted ?? false} />
 	<MessageInput onSend={handleSend} onFileUpload={handleFileUpload} disabled={sending} />
 </div>
 
@@ -137,6 +160,11 @@
 	.chat-info h2 {
 		font-size: 1rem;
 		font-weight: 600;
+	}
+
+	.lock-icon {
+		font-size: 0.8em;
+		margin-right: 4px;
 	}
 
 	.topic {

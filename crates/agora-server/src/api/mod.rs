@@ -1,9 +1,11 @@
 pub mod auth;
 pub mod events;
+pub mod keys;
 pub mod media;
 pub mod rooms;
 pub mod spaces;
 pub mod sync;
+pub mod to_device;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -100,6 +102,15 @@ pub fn router(state: AppState) -> Router {
         .route("/v3/rooms/{room_id}/state", get(events::get_all_state))
         // Sync
         .route("/v3/sync", get(sync::sync))
+        // E2EE: Key management
+        .route("/v3/keys/upload", post(keys::upload_keys))
+        .route("/v3/keys/query", post(keys::query_keys))
+        .route("/v3/keys/claim", post(keys::claim_keys))
+        // E2EE: To-device messaging
+        .route(
+            "/v3/sendToDevice/{event_type}/{txn_id}",
+            put(to_device::send_to_device),
+        )
         // Spaces
         .route("/v1/rooms/{room_id}/hierarchy", get(spaces::get_hierarchy));
 

@@ -3,17 +3,53 @@ import { api } from '$lib/api';
 
 const TOKEN_KEY = 'agora-token';
 const USER_KEY = 'agora-user';
+const DEVICE_KEY = 'agora-device';
 
 export interface AuthState {
 	token: string | null;
 	userId: string | null;
+	deviceId: string | null;
 	loading: boolean;
+}
+
+async function tauriInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+	if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+		const { invoke } = await import('@tauri-apps/api/core');
+		return invoke(cmd, args);
+	}
+	return null;
+}
+
+async function initCryptoAndUploadKeys(userId: string, deviceId: string) {
+	try {
+		const deviceKeys = (await tauriInvoke('init_crypto', {
+			userId,
+			deviceId
+		})) as Record<string, unknown> | null;
+
+		if (deviceKeys) {
+			const uploadResp = await api.keysUpload({ device_keys: deviceKeys });
+			const count =
+				uploadResp.one_time_key_counts?.signed_curve25519 ?? 0;
+
+			const otks = (await tauriInvoke('generate_otks', {
+				currentCount: count
+			})) as Record<string, unknown> | null;
+
+			if (otks && Object.keys(otks).length > 0) {
+				await api.keysUpload({ one_time_keys: otks });
+			}
+		}
+	} catch (e) {
+		console.error('E2EE init failed:', e);
+	}
 }
 
 function createAuthStore() {
 	const stored = typeof localStorage !== 'undefined';
 	const initialToken = stored ? localStorage.getItem(TOKEN_KEY) : null;
 	const initialUser = stored ? localStorage.getItem(USER_KEY) : null;
+	const initialDevice = stored ? localStorage.getItem(DEVICE_KEY) : null;
 
 	if (initialToken) {
 		api.setToken(initialToken);
@@ -22,18 +58,29 @@ function createAuthStore() {
 	const { subscribe, set, update } = writable<AuthState>({
 		token: initialToken,
 		userId: initialUser,
+		deviceId: initialDevice,
 		loading: false
 	});
 
-	function persist(token: string | null, userId: string | null) {
+	function persist(
+		token: string | null,
+		userId: string | null,
+		deviceId: string | null
+	) {
 		if (typeof localStorage === 'undefined') return;
 		if (token) {
 			localStorage.setItem(TOKEN_KEY, token);
 			localStorage.setItem(USER_KEY, userId ?? '');
+			localStorage.setItem(DEVICE_KEY, deviceId ?? '');
 		} else {
 			localStorage.removeItem(TOKEN_KEY);
 			localStorage.removeItem(USER_KEY);
+			localStorage.removeItem(DEVICE_KEY);
 		}
+	}
+
+	if (initialToken && initialUser && initialDevice) {
+		initCryptoAndUploadKeys(initialUser, initialDevice);
 	}
 
 	return {
@@ -46,8 +93,14 @@ function createAuthStore() {
 			try {
 				const resp = await api.register(username, password);
 				api.setToken(resp.access_token);
-				persist(resp.access_token, resp.user_id);
-				set({ token: resp.access_token, userId: resp.user_id, loading: false });
+				persist(resp.access_token, resp.user_id, resp.device_id);
+				set({
+					token: resp.access_token,
+					userId: resp.user_id,
+					deviceId: resp.device_id,
+					loading: false
+				});
+				await initCryptoAndUploadKeys(resp.user_id, resp.device_id);
 				return resp;
 			} catch (e) {
 				update((s) => ({ ...s, loading: false }));
@@ -59,8 +112,14 @@ function createAuthStore() {
 			try {
 				const resp = await api.login(username, password);
 				api.setToken(resp.access_token);
-				persist(resp.access_token, resp.user_id);
-				set({ token: resp.access_token, userId: resp.user_id, loading: false });
+				persist(resp.access_token, resp.user_id, resp.device_id);
+				set({
+					token: resp.access_token,
+					userId: resp.user_id,
+					deviceId: resp.device_id,
+					loading: false
+				});
+				await initCryptoAndUploadKeys(resp.user_id, resp.device_id);
 				return resp;
 			} catch (e) {
 				update((s) => ({ ...s, loading: false }));
@@ -74,8 +133,8 @@ function createAuthStore() {
 				// server might be unreachable — still clear local state
 			}
 			api.setToken(null);
-			persist(null, null);
-			set({ token: null, userId: null, loading: false });
+			persist(null, null, null);
+			set({ token: null, userId: null, deviceId: null, loading: false });
 		}
 	};
 }

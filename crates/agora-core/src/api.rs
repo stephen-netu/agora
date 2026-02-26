@@ -141,6 +141,10 @@ fn default_sync_timeout() -> u64 {
 pub struct SyncResponse {
     pub next_batch: String,
     pub rooms: SyncRooms,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_device: Option<ToDevicePayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_one_time_keys_count: Option<HashMap<String, u64>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -210,6 +214,75 @@ pub struct HierarchyRoom {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub room_type: Option<String>,
     pub children_state: Vec<RoomEvent>,
+}
+
+// ---------------------------------------------------------------------------
+// E2EE: /keys/upload, /keys/query, /keys/claim, /sendToDevice
+// ---------------------------------------------------------------------------
+
+/// POST /_matrix/client/v3/keys/upload
+#[derive(Debug, Deserialize)]
+pub struct KeysUploadRequest {
+    #[serde(default)]
+    pub device_keys: Option<DeviceKeysPayload>,
+    #[serde(default)]
+    pub one_time_keys: Option<HashMap<String, Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceKeysPayload {
+    pub user_id: String,
+    pub device_id: String,
+    pub algorithms: Vec<String>,
+    pub keys: HashMap<String, String>,
+    #[serde(default)]
+    pub signatures: HashMap<String, HashMap<String, String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KeysUploadResponse {
+    pub one_time_key_counts: HashMap<String, u64>,
+}
+
+/// POST /_matrix/client/v3/keys/query
+#[derive(Debug, Deserialize)]
+pub struct KeysQueryRequest {
+    pub device_keys: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KeysQueryResponse {
+    pub device_keys: HashMap<String, HashMap<String, DeviceKeysPayload>>,
+}
+
+/// POST /_matrix/client/v3/keys/claim
+#[derive(Debug, Deserialize)]
+pub struct KeysClaimRequest {
+    pub one_time_keys: HashMap<String, HashMap<String, String>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct KeysClaimResponse {
+    pub one_time_keys: HashMap<String, HashMap<String, Value>>,
+}
+
+/// PUT /_matrix/client/v3/sendToDevice/{eventType}/{txnId}
+#[derive(Debug, Deserialize)]
+pub struct SendToDeviceRequest {
+    pub messages: HashMap<String, HashMap<String, Value>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToDeviceEvent {
+    pub sender: String,
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub content: Value,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ToDevicePayload {
+    pub events: Vec<ToDeviceEvent>,
 }
 
 // ---------------------------------------------------------------------------

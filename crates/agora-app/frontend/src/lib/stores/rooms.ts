@@ -9,6 +9,7 @@ export interface Room {
 	roomType?: string;
 	children?: string[];
 	avatarUrl?: string;
+	encrypted?: boolean;
 }
 
 function createRoomsStore() {
@@ -67,6 +68,10 @@ function createRoomsStore() {
 		return avatarEvent?.content?.url as string | undefined;
 	}
 
+	function isEncrypted(events: RoomEvent[]): boolean {
+		return events.some((e) => e.type === 'm.room.encryption');
+	}
+
 	return {
 		subscribe,
 		processSyncResponse(sync: SyncResponse) {
@@ -95,6 +100,7 @@ function createRoomsStore() {
 					const rt = roomType(allState) ?? existing.roomType;
 					const children = mergeChildren(existing.children, allState);
 					const avatar = avatarUrl(allState) ?? existing.avatarUrl;
+					const enc = isEncrypted(allState) || existing.encrypted;
 					rooms.set(roomId, {
 						...existing,
 						name,
@@ -102,6 +108,7 @@ function createRoomsStore() {
 						roomType: rt,
 						children,
 						avatarUrl: avatar,
+						encrypted: enc,
 						timeline: [...existing.timeline, ...timelineEvents]
 					});
 				} else {
@@ -112,6 +119,7 @@ function createRoomsStore() {
 						roomType: roomType(allState),
 						children: spaceChildren(allState),
 						avatarUrl: avatarUrl(allState),
+						encrypted: isEncrypted(allState),
 						timeline: timelineEvents
 					});
 				}

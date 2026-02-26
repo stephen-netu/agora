@@ -8,6 +8,42 @@ export interface SyncState {
 	error: string | null;
 }
 
+async function tauriInvoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
+	if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+		const { invoke } = await import('@tauri-apps/api/core');
+		return invoke(cmd, args);
+	}
+	return null;
+}
+
+async function processCryptoSync(
+	toDeviceEvents: unknown[],
+	otkCounts: Record<string, number>
+) {
+	try {
+		if (toDeviceEvents.length > 0) {
+			await tauriInvoke('process_sync_crypto', {
+				toDeviceEvents
+			});
+		}
+		const needsUpload = (await tauriInvoke('needs_otk_upload', {
+			serverCounts: otkCounts
+		})) as boolean | null;
+
+		if (needsUpload) {
+			const currentCount = otkCounts['signed_curve25519'] ?? 0;
+			const otks = (await tauriInvoke('generate_otks', {
+				currentCount
+			})) as Record<string, unknown> | null;
+			if (otks && Object.keys(otks).length > 0) {
+				await api.keysUpload({ one_time_keys: otks });
+			}
+		}
+	} catch (e) {
+		console.error('crypto sync error:', e);
+	}
+}
+
 function createSyncStore() {
 	const { subscribe, set, update } = writable<SyncState>({
 		running: false,
@@ -33,6 +69,10 @@ function createSyncStore() {
 				const syncResp = await api.sync(since, since ? 30000 : 0);
 
 				rooms.processSyncResponse(syncResp);
+
+				const toDeviceEvents = syncResp.to_device?.events ?? [];
+				const otkCounts = syncResp.device_one_time_keys_count ?? {};
+				processCryptoSync(toDeviceEvents, otkCounts);
 
 				update((s) => ({
 					...s,

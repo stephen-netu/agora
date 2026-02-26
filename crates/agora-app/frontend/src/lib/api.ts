@@ -37,6 +37,12 @@ export interface JoinedRoom {
 	state: { events: RoomEvent[] };
 }
 
+export interface ToDeviceEvent {
+	sender: string;
+	type: string;
+	content: Record<string, unknown>;
+}
+
 export interface SyncResponse {
 	next_batch: string;
 	rooms: {
@@ -44,6 +50,8 @@ export interface SyncResponse {
 		invite?: Record<string, unknown>;
 		leave?: Record<string, unknown>;
 	};
+	to_device?: { events: ToDeviceEvent[] };
+	device_one_time_keys_count?: Record<string, number>;
 }
 
 export interface MediaUploadResponse {
@@ -310,6 +318,53 @@ export class AgoraApi {
 	downloadUrl(mxcUri: string): string {
 		const stripped = mxcUri.replace(/^mxc:\/\//, '');
 		return `${this.baseUrl}/_matrix/media/v3/download/${stripped}`;
+	}
+
+	// ── E2EE: Keys ────────────────────────────────────────────────
+
+	async keysUpload(body: {
+		device_keys?: Record<string, unknown>;
+		one_time_keys?: Record<string, unknown>;
+	}): Promise<{ one_time_key_counts: Record<string, number> }> {
+		return this.request('POST', '/_matrix/client/v3/keys/upload', {
+			headers: this.authHeaders(),
+			body
+		});
+	}
+
+	async keysQuery(
+		userIds: string[]
+	): Promise<{ device_keys: Record<string, Record<string, unknown>> }> {
+		const device_keys: Record<string, string[]> = {};
+		for (const uid of userIds) device_keys[uid] = [];
+		return this.request('POST', '/_matrix/client/v3/keys/query', {
+			headers: this.authHeaders(),
+			body: { device_keys }
+		});
+	}
+
+	async keysClaim(
+		oneTimeKeys: Record<string, Record<string, string>>
+	): Promise<{ one_time_keys: Record<string, Record<string, unknown>> }> {
+		return this.request('POST', '/_matrix/client/v3/keys/claim', {
+			headers: this.authHeaders(),
+			body: { one_time_keys: oneTimeKeys }
+		});
+	}
+
+	async sendToDevice(
+		eventType: string,
+		messages: Record<string, Record<string, unknown>>
+	): Promise<void> {
+		const txnId = crypto.randomUUID().replace(/-/g, '');
+		await this.request(
+			'PUT',
+			`/_matrix/client/v3/sendToDevice/${encodeURIComponent(eventType)}/${txnId}`,
+			{
+				headers: this.authHeaders(),
+				body: { messages }
+			}
+		);
 	}
 }
 

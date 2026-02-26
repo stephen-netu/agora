@@ -2,17 +2,60 @@
 	import { tick } from 'svelte';
 	import { api, type RoomEvent } from '$lib/api';
 	import { auth } from '$lib/stores/auth';
+	import { decryptEvent } from '$lib/crypto';
 	import MediaMessage from './MediaMessage.svelte';
 
 	interface Props {
 		messages: RoomEvent[];
+		encrypted?: boolean;
 	}
 
-	let { messages }: Props = $props();
+	let { messages, encrypted = false }: Props = $props();
 
 	let container: HTMLElement | undefined = $state();
-	let authState = $state({ token: null as string | null, userId: null as string | null, loading: false });
+	let authState = $state({ token: null as string | null, userId: null as string | null, deviceId: null as string | null, loading: false });
 	auth.subscribe((v) => (authState = v));
+
+	let decryptedCache = $state(new Map<string, { type: string; content: Record<string, unknown> } | null>());
+
+	$effect(() => {
+		for (const event of messages) {
+			if (event.type === 'm.room.encrypted' && !decryptedCache.has(event.event_id)) {
+				tryDecrypt(event);
+			}
+		}
+	});
+
+	async function tryDecrypt(event: RoomEvent) {
+		const content = event.content;
+		const senderKey = content.sender_key as string;
+		const sessionId = content.session_id as string;
+		const ciphertext = content.ciphertext as string;
+		const roomId = event.room_id;
+
+		if (!senderKey || !sessionId || !ciphertext) {
+			decryptedCache.set(event.event_id, null);
+			decryptedCache = new Map(decryptedCache);
+			return;
+		}
+
+		const result = await decryptEvent(roomId, senderKey, sessionId, ciphertext);
+		if (result) {
+			decryptedCache.set(event.event_id, { type: result.type, content: result.content });
+		} else {
+			decryptedCache.set(event.event_id, null);
+		}
+		decryptedCache = new Map(decryptedCache);
+	}
+
+	function getDisplayEvent(event: RoomEvent): { type: string; content: Record<string, unknown> } {
+		if (event.type === 'm.room.encrypted') {
+			const cached = decryptedCache.get(event.event_id);
+			if (cached) return cached;
+			return { type: 'm.room.encrypted', content: { body: 'Unable to decrypt' } };
+		}
+		return { type: event.type, content: event.content };
+	}
 
 	function senderName(sender: string): string {
 		const match = sender.match(/@([^:]+)/);
@@ -24,20 +67,26 @@
 		return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 
-	function isMediaMessage(event: RoomEvent): boolean {
-		const msgtype = event.content?.msgtype as string | undefined;
+	function isMediaMessage(display: { type: string; content: Record<string, unknown> }): boolean {
+		const msgtype = display.content?.msgtype as string | undefined;
 		return (
-			event.type === 'm.room.message' &&
+			display.type === 'm.room.message' &&
 			(msgtype === 'm.image' || msgtype === 'm.file' || msgtype === 'm.audio' || msgtype === 'm.video')
 		);
 	}
 
-	function isTextMessage(event: RoomEvent): boolean {
-		const msgtype = event.content?.msgtype as string | undefined;
+	function isTextMessage(display: { type: string; content: Record<string, unknown> }): boolean {
+		const msgtype = display.content?.msgtype as string | undefined;
 		return (
-			event.type === 'm.room.message' &&
+			display.type === 'm.room.message' &&
 			(msgtype === 'm.text' || msgtype === 'm.notice' || msgtype === 'm.emote')
 		);
+	}
+
+	function isEncryptedUndecrypted(event: RoomEvent): boolean {
+		if (event.type !== 'm.room.encrypted') return false;
+		const cached = decryptedCache.get(event.event_id);
+		return cached === null;
 	}
 
 	$effect(() => {
@@ -51,20 +100,27 @@
 
 <div class="message-list" bind:this={container}>
 	{#each messages as event (event.event_id)}
-		{#if isTextMessage(event) || isMediaMessage(event)}
+		{@const display = getDisplayEvent(event)}
+		{#if isTextMessage(display) || isMediaMessage(display) || isEncryptedUndecrypted(event)}
 			<div
 				class="message"
 				class:own={event.sender === authState.userId}
+				class:encrypted-msg={event.type === 'm.room.encrypted'}
 			>
 				<div class="message-header">
 					<span class="sender">{senderName(event.sender)}</span>
+					{#if event.type === 'm.room.encrypted'}
+						<span class="e2e-badge" title="End-to-end encrypted">&#128274;</span>
+					{/if}
 					<span class="time">{formatTime(event.origin_server_ts)}</span>
 				</div>
-				{#if isMediaMessage(event)}
-					<MediaMessage {event} />
+				{#if isEncryptedUndecrypted(event)}
+					<div class="message-body undecryptable">Unable to decrypt</div>
+				{:else if isMediaMessage(display)}
+					<MediaMessage event={{ ...event, type: display.type, content: display.content }} />
 				{:else}
 					<div class="message-body">
-						{event.content.body ?? ''}
+						{display.content.body ?? ''}
 					</div>
 				{/if}
 			</div>
@@ -115,6 +171,10 @@
 		color: var(--accent);
 	}
 
+	.e2e-badge {
+		font-size: 0.6rem;
+	}
+
 	.time {
 		font-size: 0.65rem;
 		color: var(--text-muted);
@@ -125,6 +185,11 @@
 		line-height: 1.4;
 		white-space: pre-wrap;
 		word-wrap: break-word;
+	}
+
+	.undecryptable {
+		font-style: italic;
+		color: var(--text-muted);
 	}
 
 	.system-message {

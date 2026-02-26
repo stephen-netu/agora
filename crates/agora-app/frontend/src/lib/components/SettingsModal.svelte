@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { theme } from '$lib/stores/theme';
 	import { themes, type ThemeId } from '$lib/themes';
+	import { auth } from '$lib/stores/auth';
+	import { getIdentityKeys } from '$lib/crypto';
 
 	interface Props {
 		onClose: () => void;
@@ -11,7 +14,18 @@
 	let currentTheme: ThemeId = $state('dark');
 	theme.subscribe((v) => (currentTheme = v));
 
-	let activeTab: 'appearance' = $state('appearance');
+	let activeTab: 'appearance' | 'encryption' = $state('appearance');
+	let deviceId = $state('');
+	let fingerprint = $state('');
+
+	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; });
+
+	onMount(async () => {
+		const keys = await getIdentityKeys();
+		if (keys) {
+			fingerprint = keys.ed25519;
+		}
+	});
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -30,10 +44,25 @@
 					class:active={activeTab === 'appearance'}
 					onclick={() => (activeTab = 'appearance')}
 				>Appearance</button>
+				<button
+					class="tab"
+					class:active={activeTab === 'encryption'}
+					onclick={() => (activeTab = 'encryption')}
+				>Encryption</button>
 			</nav>
 
 			<div class="tab-content">
-				{#if activeTab === 'appearance'}
+				{#if activeTab === 'encryption'}
+					<div class="setting-group">
+						<label class="setting-label">Device ID</label>
+						<code class="mono-value">{deviceId || 'Not set'}</code>
+					</div>
+					<div class="setting-group">
+						<label class="setting-label">Device Fingerprint (Ed25519)</label>
+						<code class="mono-value fingerprint">{fingerprint || 'Initializing...'}</code>
+						<p class="setting-hint">Share this with others to verify your device.</p>
+					</div>
+				{:else if activeTab === 'appearance'}
 					<div class="setting-group">
 						<label class="setting-label">Theme</label>
 						<div class="theme-grid">
@@ -262,5 +291,29 @@
 	.theme-desc {
 		font-size: 0.65rem;
 		color: var(--text-muted);
+	}
+
+	.mono-value {
+		display: block;
+		padding: 8px 12px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		font-family: monospace;
+		font-size: 0.75rem;
+		color: var(--text);
+		word-break: break-all;
+		user-select: all;
+	}
+
+	.fingerprint {
+		font-size: 0.65rem;
+		letter-spacing: 0.02em;
+	}
+
+	.setting-hint {
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		margin-top: 6px;
 	}
 </style>

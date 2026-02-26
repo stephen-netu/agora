@@ -12,7 +12,7 @@ Agora is a Rust workspace with four crates:
 
 - **agora-core** — Shared types: Matrix-compatible identifiers, event types (including Agora agent-first extensions), and API request/response structs.
 - **agora-server** — The homeserver binary. Implements a subset of the Matrix Client-Server API (v1.11) with an SQLite backend (PostgreSQL planned). Includes media upload/download and space hierarchy support. Runs as a single self-hosted binary.
-- **agora-app** — Desktop client built with Tauri and a SvelteKit (Svelte 5) frontend. Supports rooms, spaces (with nested child rooms), file/image uploads, avatars, and theme switching.
+- **agora-app** — Desktop client built with Tauri and a SvelteKit (Svelte 5) frontend. Supports rooms, spaces (with nested child rooms), file/image uploads, avatars, theme switching, and end-to-end encryption via Olm/Megolm (vodozemac).
 - **agora-cli** — CLI client with both scriptable command mode (for agents) and an interactive TUI (for humans).
 
 ## Quick Start
@@ -126,10 +126,22 @@ Agora implements the following Matrix Client-Server API endpoints:
 | `/_matrix/client/v3/rooms/{roomId}/state/{type}/{key}` | PUT/GET | Room state (with key) |
 | `/_matrix/client/v3/rooms/{roomId}/state/{type}` | PUT/GET | Room state (empty key) |
 | `/_matrix/client/v3/rooms/{roomId}/state` | GET | All room state |
+| `/_matrix/client/v3/keys/upload` | POST | Upload device & one-time keys |
+| `/_matrix/client/v3/keys/query` | POST | Query device keys for users |
+| `/_matrix/client/v3/keys/claim` | POST | Claim one-time keys |
+| `/_matrix/client/v3/sendToDevice/{type}/{txnId}` | PUT | Send to-device messages |
 | `/_matrix/client/v1/rooms/{roomId}/hierarchy` | GET | Space hierarchy |
 | `/_matrix/media/v3/upload` | POST | Upload media |
 | `/_matrix/media/v3/download/{serverName}/{mediaId}` | GET | Download media |
 | `/_matrix/media/v3/config` | GET | Media config |
+
+## End-to-End Encryption
+
+Agora implements full Matrix-spec Megolm E2E encryption using [vodozemac](https://github.com/matrix-org/vodozemac), the Matrix team's audited pure-Rust Olm/Megolm library:
+
+- **Server**: Device key storage, one-time key management (`/keys/upload`, `/keys/query`, `/keys/claim`), to-device messaging (`/sendToDevice`), and `to_device` + `device_one_time_keys_count` in `/sync` responses.
+- **Client (Tauri/vodozemac)**: Per-device Ed25519 + Curve25519 identity keys, signed one-time key generation, Olm session establishment for key sharing, Megolm group sessions for room encryption/decryption, automatic session rotation, and persistent local key storage.
+- **Frontend**: Transparent encryption — rooms with `m.room.encryption` enabled automatically encrypt outgoing messages and decrypt incoming `m.room.encrypted` events. Encryption can be toggled when creating a room (once enabled, it cannot be disabled per the Matrix spec). The Settings modal shows the device fingerprint for verification.
 
 ## Agent-First Event Types
 

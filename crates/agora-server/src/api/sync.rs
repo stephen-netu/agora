@@ -16,7 +16,7 @@ use crate::state::AppState;
 /// `timeout` milliseconds if there are no new events.
 pub async fn sync(
     State(state): State<AppState>,
-    AuthUser(user_id, _): AuthUser,
+    AuthUser(user_id, token): AuthUser,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<SyncResponse>, ApiError> {
     let since: i64 = query
@@ -28,6 +28,13 @@ pub async fn sync(
     let timeout = std::time::Duration::from_millis(query.timeout);
 
     let joined_rooms = state.store.get_joined_rooms(user_id.as_str()).await?;
+
+    let device_id = state
+        .store
+        .get_token(&token)
+        .await?
+        .map(|t| t.device_id)
+        .unwrap_or_default();
 
     // First pass: check for events already in the database.
     let mut join_map = HashMap::new();
@@ -86,6 +93,9 @@ pub async fn sync(
             }
         }
 
+        let (to_device, otk_counts) =
+            collect_to_device(&state, user_id.as_str(), &device_id).await?;
+
         return Ok(Json(SyncResponse {
             next_batch: max_ordering.to_string(),
             rooms: SyncRooms {
@@ -93,6 +103,8 @@ pub async fn sync(
                 invite: HashMap::new(),
                 leave: HashMap::new(),
             },
+            to_device: Some(to_device),
+            device_one_time_keys_count: Some(otk_counts),
         }));
     }
 
@@ -134,6 +146,9 @@ pub async fn sync(
         }
 
         if got_event {
+            let (to_device, otk_counts) =
+                collect_to_device(&state, user_id.as_str(), &device_id).await?;
+
             return Ok(Json(SyncResponse {
                 next_batch: max_ordering.to_string(),
                 rooms: SyncRooms {
@@ -141,6 +156,8 @@ pub async fn sync(
                     invite: HashMap::new(),
                     leave: HashMap::new(),
                 },
+                to_device: Some(to_device),
+                device_one_time_keys_count: Some(otk_counts),
             }));
         }
 
@@ -154,8 +171,42 @@ pub async fn sync(
 
     // Timed out with no events.
     let current_max = state.store.get_max_stream_ordering().await?;
+    let (to_device, otk_counts) =
+        collect_to_device(&state, user_id.as_str(), &device_id).await?;
+
     Ok(Json(SyncResponse {
         next_batch: current_max.to_string(),
         rooms: SyncRooms::default(),
+        to_device: Some(to_device),
+        device_one_time_keys_count: Some(otk_counts),
     }))
+}
+
+async fn collect_to_device(
+    state: &AppState,
+    user_id: &str,
+    device_id: &str,
+) -> Result<(ToDevicePayload, HashMap<String, u64>), ApiError> {
+    let messages = state.store.get_to_device_messages(user_id, device_id).await?;
+    let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
+
+    let events: Vec<ToDeviceEvent> = messages
+        .into_iter()
+        .filter_map(|m| {
+            let content: serde_json::Value = serde_json::from_str(&m.content_json).ok()?;
+            Some(ToDeviceEvent {
+                sender: m.sender,
+                event_type: m.event_type,
+                content,
+            })
+        })
+        .collect();
+
+    if !ids.is_empty() {
+        state.store.delete_to_device_messages(&ids).await?;
+    }
+
+    let otk_counts = state.store.count_one_time_keys(user_id, device_id).await?;
+
+    Ok((ToDevicePayload { events }, otk_counts))
 }

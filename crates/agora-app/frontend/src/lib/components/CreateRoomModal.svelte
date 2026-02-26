@@ -11,6 +11,7 @@
 
 	let name = $state('');
 	let topic = $state('');
+	let enableEncryption = $state(false);
 	let error = $state('');
 	let loading = $state(false);
 
@@ -20,6 +21,13 @@
 		try {
 			const resp = await api.createRoom(name || undefined, topic || undefined);
 			rooms.addRoom(resp.room_id, name || '(unnamed)');
+
+			if (enableEncryption) {
+				await api.setState(resp.room_id, 'm.room.encryption', '', {
+					algorithm: 'm.megolm.v1.aes-sha2'
+				});
+			}
+
 			onClose();
 			goto(`/rooms/${encodeURIComponent(resp.room_id)}`);
 		} catch (e) {
@@ -44,6 +52,16 @@
 			<div class="field">
 				<label for="room-topic">Topic (optional)</label>
 				<input id="room-topic" type="text" bind:value={topic} placeholder="A place to chat" />
+			</div>
+
+			<div class="field toggle-field">
+				<label>
+					<input type="checkbox" bind:checked={enableEncryption} />
+					<span class="toggle-label">&#128274; Enable end-to-end encryption</span>
+				</label>
+				{#if enableEncryption}
+					<p class="hint">Once enabled, encryption cannot be disabled.</p>
+				{/if}
 			</div>
 
 			{#if error}
@@ -97,6 +115,25 @@
 		font-weight: 500;
 		color: var(--text-secondary);
 		margin-bottom: 6px;
+	}
+
+	.toggle-field label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		cursor: pointer;
+		font-size: 0.8rem;
+		color: var(--text);
+	}
+
+	.toggle-label {
+		font-weight: 500;
+	}
+
+	.hint {
+		font-size: 0.7rem;
+		color: var(--text-muted);
+		margin-top: 4px;
 	}
 
 	.error {
