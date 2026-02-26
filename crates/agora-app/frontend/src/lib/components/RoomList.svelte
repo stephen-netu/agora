@@ -105,15 +105,11 @@
 							{#each childRooms(space) as child (child.id)}
 								<a
 									href="/rooms/{encodeURIComponent(child.id)}"
-									class="room-item child-item"
+									class="channel-item"
 									class:active={isActive(child.id)}
 								>
-									{#if avatarSrc(child)}
-										<img class="room-avatar-img" src={avatarSrc(child)} alt="" />
-									{:else}
-										<span class="room-avatar small">{child.name.charAt(0).toUpperCase()}</span>
-									{/if}
-									<span class="room-name">{child.name}</span>
+									<span class="channel-hash">#</span>
+									<span class="channel-name">{child.name}</span>
 								</a>
 							{/each}
 							{#if childRooms(space).length === 0}
@@ -345,8 +341,47 @@
 		padding: 4px 12px;
 	}
 
-	.child-item {
-		padding: 6px 10px;
+	.channel-item {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 3px 10px;
+		border-radius: 4px;
+		text-decoration: none;
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		transition: background 0.1s, color 0.1s;
+	}
+
+	.channel-item:hover {
+		background: var(--surface-hover);
+		color: var(--text);
+	}
+
+	.channel-item.active {
+		color: var(--text);
+		background: var(--surface);
+	}
+
+	.channel-hash {
+		font-weight: 700;
+		font-size: 0.85rem;
+		color: var(--text-muted);
+		flex-shrink: 0;
+		width: 14px;
+		text-align: center;
+	}
+
+	.channel-item.active .channel-hash,
+	.channel-item:hover .channel-hash {
+		color: var(--accent);
+	}
+
+	.channel-name {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-weight: 500;
 	}
 
 	.room-item {

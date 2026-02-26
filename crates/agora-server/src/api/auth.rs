@@ -153,6 +153,23 @@ pub async fn login(
     }))
 }
 
+/// GET /_matrix/client/v3/account/whoami
+pub async fn whoami(
+    State(state): State<AppState>,
+    crate::api::AuthUser(user_id, token): crate::api::AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let device_id = state
+        .store
+        .get_token(&token)
+        .await?
+        .map(|t| t.device_id)
+        .unwrap_or_default();
+    Ok(Json(serde_json::json!({
+        "user_id": user_id.as_str(),
+        "device_id": device_id,
+    })))
+}
+
 /// POST /_matrix/client/v3/logout
 pub async fn logout(
     State(state): State<AppState>,

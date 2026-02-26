@@ -10,6 +10,7 @@ export interface Room {
 	children?: string[];
 	avatarUrl?: string;
 	encrypted?: boolean;
+	pinnedEvents?: string[];
 }
 
 function createRoomsStore() {
@@ -72,6 +73,13 @@ function createRoomsStore() {
 		return events.some((e) => e.type === 'm.room.encryption');
 	}
 
+	function pinnedEventIds(events: RoomEvent[]): string[] | undefined {
+		const pinEvent = events.find((e) => e.type === 'm.room.pinned_events');
+		if (!pinEvent) return undefined;
+		const pinned = pinEvent.content?.pinned;
+		return Array.isArray(pinned) ? (pinned as string[]) : [];
+	}
+
 	return {
 		subscribe,
 		processSyncResponse(sync: SyncResponse) {
@@ -101,6 +109,7 @@ function createRoomsStore() {
 					const children = mergeChildren(existing.children, allState);
 					const avatar = avatarUrl(allState) ?? existing.avatarUrl;
 					const enc = isEncrypted(allState) || existing.encrypted;
+					const pinned = pinnedEventIds(allState) ?? existing.pinnedEvents;
 					rooms.set(roomId, {
 						...existing,
 						name,
@@ -109,6 +118,7 @@ function createRoomsStore() {
 						children,
 						avatarUrl: avatar,
 						encrypted: enc,
+						pinnedEvents: pinned,
 						timeline: [...existing.timeline, ...timelineEvents]
 					});
 				} else {
@@ -120,6 +130,7 @@ function createRoomsStore() {
 						children: spaceChildren(allState),
 						avatarUrl: avatarUrl(allState),
 						encrypted: isEncrypted(allState),
+						pinnedEvents: pinnedEventIds(allState),
 						timeline: timelineEvents
 					});
 				}

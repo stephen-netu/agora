@@ -131,6 +131,8 @@ pub struct SyncQuery {
     pub since: Option<String>,
     #[serde(default = "default_sync_timeout")]
     pub timeout: u64,
+    #[serde(default)]
+    pub full_state: Option<bool>,
 }
 
 fn default_sync_timeout() -> u64 {
@@ -152,7 +154,7 @@ pub struct SyncRooms {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub join: HashMap<String, JoinedRoom>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub invite: HashMap<String, Value>,
+    pub invite: HashMap<String, InvitedRoom>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub leave: HashMap<String, Value>,
 }
@@ -161,6 +163,18 @@ pub struct SyncRooms {
 pub struct JoinedRoom {
     pub timeline: Timeline,
     pub state: RoomState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ephemeral: Option<EphemeralEvents>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct EphemeralEvents {
+    pub events: Vec<Value>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct InvitedRoom {
+    pub invite_state: RoomState,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

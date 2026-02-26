@@ -8,9 +8,16 @@
 	interface Props {
 		messages: RoomEvent[];
 		encrypted?: boolean;
+		pinnedEventIds?: string[];
+		onPin?: (eventId: string) => void;
+		onUnpin?: (eventId: string) => void;
 	}
 
-	let { messages, encrypted = false }: Props = $props();
+	let { messages, encrypted = false, pinnedEventIds = [], onPin, onUnpin }: Props = $props();
+
+	function isPinned(eventId: string): boolean {
+		return pinnedEventIds.includes(eventId);
+	}
 
 	let container: HTMLElement | undefined = $state();
 	let authState = $state({ token: null as string | null, userId: null as string | null, deviceId: null as string | null, loading: false });
@@ -106,13 +113,24 @@
 				class="message"
 				class:own={event.sender === authState.userId}
 				class:encrypted-msg={event.type === 'm.room.encrypted'}
+				class:pinned={isPinned(event.event_id)}
 			>
 				<div class="message-header">
 					<span class="sender">{senderName(event.sender)}</span>
+					{#if isPinned(event.event_id)}
+						<span class="pin-badge" title="Pinned">&#128204;</span>
+					{/if}
 					{#if event.type === 'm.room.encrypted'}
 						<span class="e2e-badge" title="End-to-end encrypted">&#128274;</span>
 					{/if}
 					<span class="time">{formatTime(event.origin_server_ts)}</span>
+					<span class="msg-actions">
+						{#if isPinned(event.event_id) && onUnpin}
+							<button class="action-btn" onclick={() => onUnpin(event.event_id)} title="Unpin">&#128204;</button>
+						{:else if onPin}
+							<button class="action-btn" onclick={() => onPin(event.event_id)} title="Pin">&#128204;</button>
+						{/if}
+					</span>
 				</div>
 				{#if isEncryptedUndecrypted(event)}
 					<div class="message-body undecryptable">Unable to decrypt</div>
@@ -158,6 +176,10 @@
 		border-top-right-radius: 4px;
 	}
 
+	.message.pinned {
+		border-left: 2px solid var(--accent);
+	}
+
 	.message-header {
 		display: flex;
 		align-items: baseline;
@@ -171,6 +193,10 @@
 		color: var(--accent);
 	}
 
+	.pin-badge {
+		font-size: 0.6rem;
+	}
+
 	.e2e-badge {
 		font-size: 0.6rem;
 	}
@@ -178,6 +204,31 @@
 	.time {
 		font-size: 0.65rem;
 		color: var(--text-muted);
+	}
+
+	.msg-actions {
+		opacity: 0;
+		transition: opacity 0.1s;
+		margin-left: auto;
+	}
+
+	.message:hover .msg-actions {
+		opacity: 1;
+	}
+
+	.action-btn {
+		background: none;
+		border: none;
+		font-size: 0.65rem;
+		padding: 2px 4px;
+		border-radius: 4px;
+		color: var(--text-muted);
+		cursor: pointer;
+	}
+
+	.action-btn:hover {
+		background: var(--surface-hover);
+		color: var(--accent);
 	}
 
 	.message-body {

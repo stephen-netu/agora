@@ -91,6 +91,37 @@
 	let authState: AuthState = $state({ token: null, userId: null, deviceId: null, loading: false });
 	auth.subscribe((v) => (authState = v));
 
+	let showPinnedBar = $state(false);
+	let pinnedIds = $derived(room?.pinnedEvents ?? []);
+	let pinnedMessages = $derived(
+		pinnedIds
+			.map((id) => messages.find((m) => m.event_id === id))
+			.filter((m): m is RoomEvent => m !== undefined)
+	);
+
+	async function handlePin(eventId: string) {
+		const current = room?.pinnedEvents ?? [];
+		if (current.includes(eventId)) return;
+		try {
+			await api.setState(roomId, 'm.room.pinned_events', '', {
+				pinned: [...current, eventId]
+			});
+		} catch (e) {
+			console.error('Failed to pin:', e);
+		}
+	}
+
+	async function handleUnpin(eventId: string) {
+		const current = room?.pinnedEvents ?? [];
+		try {
+			await api.setState(roomId, 'm.room.pinned_events', '', {
+				pinned: current.filter((id) => id !== eventId)
+			});
+		} catch (e) {
+			console.error('Failed to unpin:', e);
+		}
+	}
+
 	async function handleLeave() {
 		try {
 			await api.leaveRoom(roomId);
@@ -126,12 +157,40 @@
 			{/if}
 		</div>
 		<div class="header-actions">
+			{#if pinnedIds.length > 0}
+				<button
+					class="btn-secondary pin-toggle"
+					onclick={() => (showPinnedBar = !showPinnedBar)}
+					title="{pinnedIds.length} pinned message(s)"
+				>&#128204; {pinnedIds.length}</button>
+			{/if}
 			<button class="btn-secondary leave-btn" onclick={handleLeave}>Leave</button>
 			<button class="btn-danger delete-btn" onclick={handleDelete} title="Delete (creator only)">Delete</button>
 		</div>
 	</div>
 
-	<MessageList {messages} encrypted={room?.encrypted ?? false} />
+	{#if showPinnedBar && pinnedMessages.length > 0}
+		<div class="pinned-bar">
+			<span class="pinned-label">&#128204; Pinned</span>
+			<div class="pinned-list">
+				{#each pinnedMessages as pm (pm.event_id)}
+					<div class="pinned-item">
+						<span class="pinned-sender">{pm.sender.replace(/@([^:]+).*/, '$1')}</span>
+						<span class="pinned-body">{pm.content?.body ?? '(media)'}</span>
+						<button class="pinned-unpin" onclick={() => handleUnpin(pm.event_id)} title="Unpin">&times;</button>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+
+	<MessageList
+		{messages}
+		encrypted={room?.encrypted ?? false}
+		pinnedEventIds={pinnedIds}
+		onPin={handlePin}
+		onUnpin={handleUnpin}
+	/>
 	<MessageInput onSend={handleSend} onFileUpload={handleFileUpload} disabled={sending} />
 </div>
 
@@ -177,8 +236,74 @@
 		gap: 6px;
 	}
 
+	.pin-toggle {
+		font-size: 0.75rem;
+		padding: 6px 10px;
+	}
+
 	.leave-btn, .delete-btn {
 		font-size: 0.75rem;
 		padding: 6px 12px;
+	}
+
+	.pinned-bar {
+		padding: 8px 20px;
+		background: var(--surface);
+		border-bottom: 1px solid var(--border);
+	}
+
+	.pinned-label {
+		font-size: 0.7rem;
+		font-weight: 600;
+		color: var(--text-secondary);
+		display: block;
+		margin-bottom: 4px;
+	}
+
+	.pinned-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-height: 120px;
+		overflow-y: auto;
+	}
+
+	.pinned-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 8px;
+		background: var(--bg);
+		border-radius: 6px;
+		font-size: 0.75rem;
+	}
+
+	.pinned-sender {
+		font-weight: 600;
+		color: var(--accent);
+		flex-shrink: 0;
+	}
+
+	.pinned-body {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+		color: var(--text-secondary);
+	}
+
+	.pinned-unpin {
+		margin-left: auto;
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 0.9rem;
+		padding: 0 4px;
+		cursor: pointer;
+		flex-shrink: 0;
+	}
+
+	.pinned-unpin:hover {
+		color: var(--danger);
 	}
 </style>

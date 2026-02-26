@@ -82,6 +82,12 @@ pub struct ToDeviceRecord {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct RoomAliasRecord {
+    pub alias: String,
+    pub room_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Storage trait — implemented for each backend
 // ---------------------------------------------------------------------------
@@ -197,6 +203,75 @@ pub trait Storage: Send + Sync + 'static {
     ) -> Result<Vec<ToDeviceRecord>, StorageError>;
 
     async fn delete_to_device_messages(&self, ids: &[i64]) -> Result<(), StorageError>;
+
+    // -- Transaction idempotency ---------------------------------------------
+    async fn get_txn_event_id(
+        &self,
+        user_id: &str,
+        txn_id: &str,
+    ) -> Result<Option<String>, StorageError>;
+
+    async fn store_txn(
+        &self,
+        user_id: &str,
+        txn_id: &str,
+        event_id: &str,
+    ) -> Result<(), StorageError>;
+
+    // -- Redaction ------------------------------------------------------------
+    async fn redact_event(&self, event_id: &str) -> Result<(), StorageError>;
+
+    // -- User profile ---------------------------------------------------------
+    async fn update_display_name(
+        &self,
+        user_id: &str,
+        display_name: &str,
+    ) -> Result<(), StorageError>;
+
+    async fn update_avatar_url(
+        &self,
+        user_id: &str,
+        avatar_url: &str,
+    ) -> Result<(), StorageError>;
+
+    async fn get_avatar_url(&self, user_id: &str) -> Result<Option<String>, StorageError>;
+
+    // -- Room aliases ---------------------------------------------------------
+    async fn create_room_alias(&self, alias: &str, room_id: &str) -> Result<(), StorageError>;
+    async fn get_room_alias(&self, alias: &str) -> Result<Option<String>, StorageError>;
+    async fn delete_room_alias(&self, alias: &str) -> Result<(), StorageError>;
+
+    // -- Room visibility / directory ------------------------------------------
+    async fn set_room_visibility(
+        &self,
+        room_id: &str,
+        visibility: &str,
+    ) -> Result<(), StorageError>;
+
+    async fn get_public_rooms(
+        &self,
+        limit: u64,
+        search: Option<&str>,
+    ) -> Result<Vec<RoomRecord>, StorageError>;
+
+    // -- Devices --------------------------------------------------------------
+    async fn get_devices_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<AccessTokenRecord>, StorageError>;
+
+    async fn delete_device(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<(), StorageError>;
+
+    // -- Membership queries ---------------------------------------------------
+    async fn get_rooms_with_membership(
+        &self,
+        user_id: &str,
+        membership: &str,
+    ) -> Result<Vec<String>, StorageError>;
 }
 
 #[derive(Debug, thiserror::Error)]

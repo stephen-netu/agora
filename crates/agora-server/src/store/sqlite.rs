@@ -6,8 +6,8 @@ use agora_core::events::RoomEvent;
 use agora_core::identifiers::EventId;
 
 use super::{
-    AccessTokenRecord, DeviceKeysRecord, MediaRecord, OneTimeKeyRecord, RoomMemberRecord,
-    RoomRecord, Storage, StorageError, ToDeviceRecord, UserRecord,
+    AccessTokenRecord, DeviceKeysRecord, MediaRecord, OneTimeKeyRecord, RoomAliasRecord,
+    RoomMemberRecord, RoomRecord, Storage, StorageError, ToDeviceRecord, UserRecord,
 };
 
 pub struct SqliteStore {
@@ -118,6 +118,22 @@ impl SqliteStore {
             )",
             "CREATE INDEX IF NOT EXISTS idx_to_device_recipient
                 ON to_device_messages(recipient_user, recipient_device)",
+            "CREATE TABLE IF NOT EXISTS sent_transactions (
+                user_id TEXT NOT NULL,
+                txn_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                PRIMARY KEY (user_id, txn_id)
+            )",
+            "CREATE TABLE IF NOT EXISTS room_aliases (
+                alias TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL
+            )",
+        ];
+
+        // Column migrations (safe to run repeatedly)
+        let alter_statements = [
+            "ALTER TABLE users ADD COLUMN avatar_url TEXT",
+            "ALTER TABLE rooms ADD COLUMN visibility TEXT DEFAULT 'private'",
         ];
 
         for sql in &statements {
@@ -125,6 +141,10 @@ impl SqliteStore {
                 .execute(&self.pool)
                 .await
                 .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+
+        for sql in &alter_statements {
+            let _ = sqlx::query(sql).execute(&self.pool).await;
         }
 
         Ok(())
@@ -760,6 +780,225 @@ impl Storage for SqliteStore {
                 .map_err(|e| StorageError::Database(e.to_string()))?;
         }
         Ok(())
+    }
+
+    // -- Transaction idempotency ---------------------------------------------
+
+    async fn get_txn_event_id(&self, user_id: &str, txn_id: &str) -> Result<Option<String>, StorageError> {
+        let row = sqlx::query("SELECT event_id FROM sent_transactions WHERE user_id = ? AND txn_id = ?")
+            .bind(user_id)
+            .bind(txn_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(row.map(|r| r.get("event_id")))
+    }
+
+    async fn store_txn(&self, user_id: &str, txn_id: &str, event_id: &str) -> Result<(), StorageError> {
+        sqlx::query("INSERT OR IGNORE INTO sent_transactions (user_id, txn_id, event_id) VALUES (?, ?, ?)")
+            .bind(user_id)
+            .bind(txn_id)
+            .bind(event_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    // -- Redaction ------------------------------------------------------------
+
+    async fn redact_event(&self, event_id: &str) -> Result<(), StorageError> {
+        let row = sqlx::query("SELECT event_type, content FROM events WHERE event_id = ?")
+            .bind(event_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        if let Some(r) = row {
+            let event_type: String = r.get("event_type");
+            let content_str: String = r.get("content");
+            let content: serde_json::Value = serde_json::from_str(&content_str).unwrap_or_default();
+
+            let redacted = match event_type.as_str() {
+                "m.room.member" => {
+                    let mut obj = serde_json::Map::new();
+                    if let Some(m) = content.get("membership") {
+                        obj.insert("membership".to_owned(), m.clone());
+                    }
+                    serde_json::Value::Object(obj)
+                }
+                "m.room.create" => content,
+                "m.room.join_rules" => {
+                    let mut obj = serde_json::Map::new();
+                    if let Some(j) = content.get("join_rule") {
+                        obj.insert("join_rule".to_owned(), j.clone());
+                    }
+                    serde_json::Value::Object(obj)
+                }
+                "m.room.power_levels" => content,
+                _ => serde_json::json!({}),
+            };
+
+            let redacted_str = serde_json::to_string(&redacted).unwrap_or_else(|_| "{}".to_owned());
+            sqlx::query("UPDATE events SET content = ? WHERE event_id = ?")
+                .bind(&redacted_str)
+                .bind(event_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| StorageError::Database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    // -- User profile ---------------------------------------------------------
+
+    async fn update_display_name(&self, user_id: &str, display_name: &str) -> Result<(), StorageError> {
+        sqlx::query("UPDATE users SET display_name = ? WHERE user_id = ?")
+            .bind(display_name)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn update_avatar_url(&self, user_id: &str, avatar_url: &str) -> Result<(), StorageError> {
+        sqlx::query("UPDATE users SET avatar_url = ? WHERE user_id = ?")
+            .bind(avatar_url)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_avatar_url(&self, user_id: &str) -> Result<Option<String>, StorageError> {
+        let row = sqlx::query("SELECT avatar_url FROM users WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(row.and_then(|r| r.get("avatar_url")))
+    }
+
+    // -- Room aliases ---------------------------------------------------------
+
+    async fn create_room_alias(&self, alias: &str, room_id: &str) -> Result<(), StorageError> {
+        sqlx::query("INSERT INTO room_aliases (alias, room_id) VALUES (?, ?)")
+            .bind(alias)
+            .bind(room_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_room_alias(&self, alias: &str) -> Result<Option<String>, StorageError> {
+        let row = sqlx::query("SELECT room_id FROM room_aliases WHERE alias = ?")
+            .bind(alias)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(row.map(|r| r.get("room_id")))
+    }
+
+    async fn delete_room_alias(&self, alias: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM room_aliases WHERE alias = ?")
+            .bind(alias)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    // -- Room visibility / directory ------------------------------------------
+
+    async fn set_room_visibility(&self, room_id: &str, visibility: &str) -> Result<(), StorageError> {
+        sqlx::query("UPDATE rooms SET visibility = ? WHERE room_id = ?")
+            .bind(visibility)
+            .bind(room_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_public_rooms(&self, limit: u64, search: Option<&str>) -> Result<Vec<RoomRecord>, StorageError> {
+        let rows = if let Some(term) = search {
+            let pattern = format!("%{term}%");
+            sqlx::query(
+                "SELECT room_id, name, topic, creator, created_at, room_type
+                 FROM rooms WHERE visibility = 'public' AND (name LIKE ? OR topic LIKE ?)
+                 LIMIT ?",
+            )
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        } else {
+            sqlx::query(
+                "SELECT room_id, name, topic, creator, created_at, room_type
+                 FROM rooms WHERE visibility = 'public' LIMIT ?",
+            )
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        };
+
+        Ok(rows.iter().map(|r| RoomRecord {
+            room_id: r.get("room_id"),
+            name: r.get("name"),
+            topic: r.get("topic"),
+            creator: r.get("creator"),
+            created_at: r.get("created_at"),
+            room_type: r.get("room_type"),
+        }).collect())
+    }
+
+    // -- Devices --------------------------------------------------------------
+
+    async fn get_devices_for_user(&self, user_id: &str) -> Result<Vec<AccessTokenRecord>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT token, user_id, device_id, created_at FROM access_tokens WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(rows.iter().map(|r| AccessTokenRecord {
+            token: r.get("token"),
+            user_id: r.get("user_id"),
+            device_id: r.get("device_id"),
+            created_at: r.get("created_at"),
+        }).collect())
+    }
+
+    async fn delete_device(&self, user_id: &str, device_id: &str) -> Result<(), StorageError> {
+        sqlx::query("DELETE FROM access_tokens WHERE user_id = ? AND device_id = ?")
+            .bind(user_id)
+            .bind(device_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    // -- Membership queries ---------------------------------------------------
+
+    async fn get_rooms_with_membership(&self, user_id: &str, membership: &str) -> Result<Vec<String>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT room_id FROM room_members WHERE user_id = ? AND membership = ?",
+        )
+        .bind(user_id)
+        .bind(membership)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+        Ok(rows.iter().map(|r| r.get("room_id")).collect())
     }
 }
 

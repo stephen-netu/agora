@@ -20,10 +20,13 @@ fn now_millis() -> u64 {
 pub async fn send_event(
     State(state): State<AppState>,
     AuthUser(user_id, _): AuthUser,
-    Path((room_id, event_type, _txn_id)): Path<(String, String, String)>,
+    Path((room_id, event_type, txn_id)): Path<(String, String, String)>,
     Json(content): Json<serde_json::Value>,
 ) -> Result<Json<SendEventResponse>, ApiError> {
-    // Verify membership.
+    if let Some(existing) = state.store.get_txn_event_id(user_id.as_str(), &txn_id).await? {
+        return Ok(Json(SendEventResponse { event_id: existing }));
+    }
+
     let membership = state
         .store
         .get_membership(&room_id, user_id.as_str())
@@ -39,7 +42,7 @@ pub async fn send_event(
     let event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,
-        sender: user_id,
+        sender: user_id.clone(),
         event_type,
         state_key: None,
         content,
@@ -49,6 +52,52 @@ pub async fn send_event(
 
     let ordering = state.store.store_event(&event).await?;
     state.sync_engine.broadcast(&room_id, &event, ordering);
+    state.store.store_txn(user_id.as_str(), &txn_id, event_id.as_str()).await?;
+
+    Ok(Json(SendEventResponse {
+        event_id: event_id.as_str().to_owned(),
+    }))
+}
+
+/// PUT /_matrix/client/v3/rooms/{roomId}/redact/{eventId}/{txnId}
+pub async fn redact_event(
+    State(state): State<AppState>,
+    AuthUser(user_id, _): AuthUser,
+    Path((room_id, target_event_id, txn_id)): Path<(String, String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<SendEventResponse>, ApiError> {
+    if let Some(existing) = state.store.get_txn_event_id(user_id.as_str(), &txn_id).await? {
+        return Ok(Json(SendEventResponse { event_id: existing }));
+    }
+
+    let membership = state
+        .store
+        .get_membership(&room_id, user_id.as_str())
+        .await?;
+    if membership.as_deref() != Some("join") {
+        return Err(ApiError::forbidden("you are not a member of this room"));
+    }
+
+    state.store.redact_event(&target_event_id).await?;
+
+    let rid = RoomId::parse(&room_id)
+        .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
+    let event_id = EventId::new();
+    let reason = body.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    let redaction_event = RoomEvent {
+        event_id: event_id.clone(),
+        room_id: rid,
+        sender: user_id.clone(),
+        event_type: "m.room.redaction".to_owned(),
+        state_key: None,
+        content: serde_json::json!({ "redacts": target_event_id, "reason": reason }),
+        origin_server_ts: now_millis(),
+        stream_ordering: None,
+    };
+
+    let ordering = state.store.store_event(&redaction_event).await?;
+    state.sync_engine.broadcast(&room_id, &redaction_event, ordering);
+    state.store.store_txn(user_id.as_str(), &txn_id, event_id.as_str()).await?;
 
     Ok(Json(SendEventResponse {
         event_id: event_id.as_str().to_owned(),

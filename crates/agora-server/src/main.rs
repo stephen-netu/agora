@@ -48,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
         sync_engine: Arc::new(SyncEngine::new()),
         media_path,
         max_upload_bytes: config.media.max_upload_bytes,
+        typing: Default::default(),
     };
 
     let cors = tower_http::cors::CorsLayer::new()

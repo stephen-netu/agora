@@ -1,13 +1,15 @@
 # TODO(agora)
 
+## Completed
+
+- [x] E2E encryption for messages (https://matrix.org/docs/matrix-concepts/end-to-end-encryption/)
+- [x] Pin (& unpin) messages
+- [x] Space child rooms rendered as # room-name (compact list view)
+
 ## Immediate
 
-- [ ] E2E encryption for messages (https://matrix.org/docs/matrix-concepts/end-to-end-encryption/)
-- [ ] Pin (& unpin) messages
-
-## Next
-
 - [ ] Tighten up Matrix protocol compliance (https://matrix.org/docs/matrix-concepts/elements-of-matrix/)
+- [ ] Verify agents can view images
 - [ ] Video uploading & inline player
 - [ ] Emoji reactions - discord-like
 - [ ] User avatar & background image, viewable profile (click on username)

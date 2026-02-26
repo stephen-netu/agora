@@ -26,6 +26,7 @@ pub async fn sync(
         .unwrap_or(0);
 
     let timeout = std::time::Duration::from_millis(query.timeout);
+    let full_state = query.full_state.unwrap_or(false);
 
     let joined_rooms = state.store.get_joined_rooms(user_id.as_str()).await?;
 
@@ -48,7 +49,7 @@ pub async fn sync(
             }
         }
         if !events.is_empty() {
-            let state_events = if since == 0 {
+            let state_events = if since == 0 || full_state {
                 state.store.get_state_events(room_id).await?
             } else {
                 events
@@ -68,6 +69,7 @@ pub async fn sync(
                     state: RoomState {
                         events: state_events,
                     },
+                    ephemeral: None,
                 },
             );
         }
@@ -87,6 +89,7 @@ pub async fn sync(
                             state: RoomState {
                                 events: state_events,
                             },
+                            ephemeral: None,
                         },
                     );
                 }
@@ -95,12 +98,14 @@ pub async fn sync(
 
         let (to_device, otk_counts) =
             collect_to_device(&state, user_id.as_str(), &device_id).await?;
+        add_ephemeral_typing(&state, &mut join_map).await;
+        let invite_map = collect_invites(&state, user_id.as_str()).await?;
 
         return Ok(Json(SyncResponse {
             next_batch: max_ordering.to_string(),
             rooms: SyncRooms {
                 join: join_map,
-                invite: HashMap::new(),
+                invite: invite_map,
                 leave: HashMap::new(),
             },
             to_device: Some(to_device),
@@ -133,6 +138,7 @@ pub async fn sync(
                                 limited: false,
                             },
                             state: RoomState::default(),
+                            ephemeral: None,
                         }
                     });
                     if sync_event.event.state_key.is_some() {
@@ -148,12 +154,14 @@ pub async fn sync(
         if got_event {
             let (to_device, otk_counts) =
                 collect_to_device(&state, user_id.as_str(), &device_id).await?;
+            add_ephemeral_typing(&state, &mut join_map).await;
+            let invite_map = collect_invites(&state, user_id.as_str()).await?;
 
             return Ok(Json(SyncResponse {
                 next_batch: max_ordering.to_string(),
                 rooms: SyncRooms {
                     join: join_map,
-                    invite: HashMap::new(),
+                    invite: invite_map,
                     leave: HashMap::new(),
                 },
                 to_device: Some(to_device),
@@ -173,13 +181,65 @@ pub async fn sync(
     let current_max = state.store.get_max_stream_ordering().await?;
     let (to_device, otk_counts) =
         collect_to_device(&state, user_id.as_str(), &device_id).await?;
+    let invite_map = collect_invites(&state, user_id.as_str()).await?;
 
     Ok(Json(SyncResponse {
         next_batch: current_max.to_string(),
-        rooms: SyncRooms::default(),
+        rooms: SyncRooms {
+            join: HashMap::new(),
+            invite: invite_map,
+            leave: HashMap::new(),
+        },
         to_device: Some(to_device),
         device_one_time_keys_count: Some(otk_counts),
     }))
+}
+
+async fn collect_invites(
+    state: &AppState,
+    user_id: &str,
+) -> Result<HashMap<String, InvitedRoom>, ApiError> {
+    let invited_rooms = state
+        .store
+        .get_rooms_with_membership(user_id, "invite")
+        .await?;
+    let mut invite_map = HashMap::new();
+    for room_id in invited_rooms {
+        let state_events = state.store.get_state_events(&room_id).await?;
+        let stripped: Vec<_> = state_events
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e.event_type.as_str(),
+                    "m.room.create" | "m.room.name" | "m.room.member" | "m.room.join_rules"
+                )
+            })
+            .collect();
+        invite_map.insert(
+            room_id,
+            InvitedRoom {
+                invite_state: RoomState { events: stripped },
+            },
+        );
+    }
+    Ok(invite_map)
+}
+
+async fn add_ephemeral_typing(
+    state: &AppState,
+    join_map: &mut HashMap<String, JoinedRoom>,
+) {
+    for (room_id, joined) in join_map.iter_mut() {
+        let typing_users = crate::api::typing::get_typing_users(state, room_id).await;
+        if !typing_users.is_empty() {
+            joined.ephemeral = Some(EphemeralEvents {
+                events: vec![serde_json::json!({
+                    "type": "m.typing",
+                    "content": { "user_ids": typing_users },
+                })],
+            });
+        }
+    }
 }
 
 async fn collect_to_device(
