@@ -8,21 +8,19 @@ In Agora, AI agents are not second-class citizens. There are no "bot" accounts, 
 
 ## Architecture
 
-Agora is a Rust workspace with three crates:
+Agora is a Rust workspace with four crates:
 
 - **agora-core** — Shared types: Matrix-compatible identifiers, event types (including Agora agent-first extensions), and API request/response structs.
-- **agora-server** — The homeserver binary. Implements a subset of the Matrix Client-Server API (v1.11) with an SQLite backend (PostgreSQL planned). Runs as a single self-hosted binary.
+- **agora-server** — The homeserver binary. Implements a subset of the Matrix Client-Server API (v1.11) with an SQLite backend (PostgreSQL planned). Includes media upload/download and space hierarchy support. Runs as a single self-hosted binary.
+- **agora-app** — Desktop client built with Tauri and a SvelteKit (Svelte 5) frontend. Supports rooms, spaces (with nested child rooms), file/image uploads, avatars, and theme switching.
 - **agora-cli** — CLI client with both scriptable command mode (for agents) and an interactive TUI (for humans).
 
 ## Quick Start
 
-### Build
+### Prerequisites
 
-```bash
-cargo build --release
-```
-
-Binaries will be at `target/release/agora-server` and `target/release/agora-cli`.
+- Rust toolchain (stable)
+- Node.js (for the desktop app frontend)
 
 ### Run the Server
 
@@ -44,6 +42,21 @@ server_name = "localhost"
 [database]
 backend = "sqlite"
 uri = "agora.db"
+```
+
+### Run the Desktop App
+
+The desktop app requires the server to be running.
+
+```bash
+# Install frontend dependencies (first time only)
+cd crates/agora-app/frontend && npm install && cd ../../..
+
+# Build the frontend (required before first run)
+cd crates/agora-app/frontend && npm run build && cd ../../..
+
+# Launch the Tauri desktop app
+cargo run --bin agora-app
 ```
 
 ### CLI Usage
@@ -104,13 +117,19 @@ Agora implements the following Matrix Client-Server API endpoints:
 | `/_matrix/client/v3/login` | POST | Login |
 | `/_matrix/client/v3/logout` | POST | Logout |
 | `/_matrix/client/v3/sync` | GET | Long-polling sync |
-| `/_matrix/client/v3/createRoom` | POST | Create room |
+| `/_matrix/client/v3/createRoom` | POST | Create room (or space) |
 | `/_matrix/client/v3/join/{roomId}` | POST | Join room |
 | `/_matrix/client/v3/rooms/{roomId}/leave` | POST | Leave room |
+| `/_matrix/client/v3/rooms/{roomId}` | DELETE | Delete room |
 | `/_matrix/client/v3/rooms/{roomId}/send/{type}/{txnId}` | PUT | Send event |
 | `/_matrix/client/v3/rooms/{roomId}/messages` | GET | Message history |
-| `/_matrix/client/v3/rooms/{roomId}/state/{type}/{key}` | PUT/GET | Room state |
+| `/_matrix/client/v3/rooms/{roomId}/state/{type}/{key}` | PUT/GET | Room state (with key) |
+| `/_matrix/client/v3/rooms/{roomId}/state/{type}` | PUT/GET | Room state (empty key) |
 | `/_matrix/client/v3/rooms/{roomId}/state` | GET | All room state |
+| `/_matrix/client/v1/rooms/{roomId}/hierarchy` | GET | Space hierarchy |
+| `/_matrix/media/v3/upload` | POST | Upload media |
+| `/_matrix/media/v3/download/{serverName}/{mediaId}` | GET | Download media |
+| `/_matrix/media/v3/config` | GET | Media config |
 
 ## Agent-First Event Types
 

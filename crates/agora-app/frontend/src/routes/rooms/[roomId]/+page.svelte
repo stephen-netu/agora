@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type RoomEvent } from '$lib/api';
@@ -10,26 +9,26 @@
 
 	let roomId = $derived(decodeURIComponent(page.params.roomId));
 
-	let room: Room | undefined = $state();
-	let messages: RoomEvent[] = $state([]);
+	let allRooms = $state(new Map<string, Room>());
+	rooms.subscribe((map) => { allRooms = map; });
+
+	let room = $derived(allRooms.get(roomId));
+	let messages: RoomEvent[] = $derived(room?.timeline ?? []);
 	let sending = $state(false);
-	let historyLoaded = $state(false);
+	let historyLoadedFor = $state('');
 
-	rooms.subscribe((map) => {
-		room = map.get(roomId);
-		messages = room?.timeline ?? [];
+	$effect(() => {
+		const rid = roomId;
+		if (rid && rid !== historyLoadedFor) {
+			loadHistory(rid);
+		}
 	});
 
-	onMount(() => {
-		loadHistory();
-	});
-
-	async function loadHistory() {
-		if (historyLoaded) return;
+	async function loadHistory(rid: string) {
 		try {
-			const resp = await api.getMessages(roomId, 50);
-			rooms.appendMessages(roomId, resp.chunk);
-			historyLoaded = true;
+			const resp = await api.getMessages(rid, 50);
+			rooms.appendMessages(rid, resp.chunk);
+			historyLoadedFor = rid;
 		} catch (e) {
 			console.error('Failed to load history:', e);
 		}

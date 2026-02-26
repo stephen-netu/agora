@@ -42,6 +42,26 @@ function createRoomsStore() {
 			.filter(Boolean);
 	}
 
+	function mergeChildren(
+		existing: string[] | undefined,
+		newStateEvents: RoomEvent[]
+	): string[] | undefined {
+		const childEvents = newStateEvents.filter(
+			(e) => e.type === 'm.space.child' && e.state_key
+		);
+		if (childEvents.length === 0) return existing;
+
+		const current = new Set(existing ?? []);
+		for (const e of childEvents) {
+			if (e.content && Object.keys(e.content).length > 0) {
+				current.add(e.state_key!);
+			} else {
+				current.delete(e.state_key!);
+			}
+		}
+		return Array.from(current);
+	}
+
 	function avatarUrl(events: RoomEvent[]): string | undefined {
 		const avatarEvent = events.find((e) => e.type === 'm.room.avatar');
 		return avatarEvent?.content?.url as string | undefined;
@@ -52,47 +72,49 @@ function createRoomsStore() {
 		processSyncResponse(sync: SyncResponse) {
 			update((rooms) => {
 				const joined = sync.rooms.join ?? {};
-				for (const [roomId, data] of Object.entries(joined)) {
-					const existing = rooms.get(roomId);
+			for (const [roomId, data] of Object.entries(joined)) {
+				const existing = rooms.get(roomId);
 
-					const stateEvents = data.state.events;
-					const timelineEvents = data.timeline.events;
-					const allStateForParsing = [
-						...(existing ? [] : []),
-						...stateEvents
-					];
+				const stateEvents = data.state.events;
+				const timelineEvents = data.timeline.events;
+				const timelineStateEvents = timelineEvents.filter(
+					(e) => e.state_key !== undefined
+				);
+				const stateMap = new Map<string, RoomEvent>();
+				for (const e of [...timelineStateEvents, ...stateEvents]) {
+					stateMap.set(`${e.type}\0${e.state_key}`, e);
+				}
+				const allState = Array.from(stateMap.values());
 
-					if (existing) {
-						const name =
-							roomName(stateEvents) !== '(unnamed)'
-								? roomName(stateEvents)
-								: existing.name;
-						const topic = roomTopic(stateEvents) || existing.topic;
-						const rt = roomType(stateEvents) ?? existing.roomType;
-						const children = spaceChildren(stateEvents).length > 0
-							? spaceChildren(stateEvents)
-							: existing.children;
-						const avatar = avatarUrl(stateEvents) ?? existing.avatarUrl;
-						rooms.set(roomId, {
-							...existing,
-							name,
-							topic,
-							roomType: rt,
-							children,
-							avatarUrl: avatar,
-							timeline: [...existing.timeline, ...timelineEvents]
-						});
-					} else {
-						rooms.set(roomId, {
-							id: roomId,
-							name: roomName(stateEvents),
-							topic: roomTopic(stateEvents),
-							roomType: roomType(stateEvents),
-							children: spaceChildren(stateEvents),
-							avatarUrl: avatarUrl(stateEvents),
-							timeline: timelineEvents
-						});
-					}
+				if (existing) {
+					const name =
+						roomName(allState) !== '(unnamed)'
+							? roomName(allState)
+							: existing.name;
+					const topic = roomTopic(allState) || existing.topic;
+					const rt = roomType(allState) ?? existing.roomType;
+					const children = mergeChildren(existing.children, allState);
+					const avatar = avatarUrl(allState) ?? existing.avatarUrl;
+					rooms.set(roomId, {
+						...existing,
+						name,
+						topic,
+						roomType: rt,
+						children,
+						avatarUrl: avatar,
+						timeline: [...existing.timeline, ...timelineEvents]
+					});
+				} else {
+					rooms.set(roomId, {
+						id: roomId,
+						name: roomName(allState),
+						topic: roomTopic(allState),
+						roomType: roomType(allState),
+						children: spaceChildren(allState),
+						avatarUrl: avatarUrl(allState),
+						timeline: timelineEvents
+					});
+				}
 				}
 				return new Map(rooms);
 			});

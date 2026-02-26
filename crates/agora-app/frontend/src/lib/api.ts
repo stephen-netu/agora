@@ -205,14 +205,13 @@ export class AgoraApi {
 		content: Record<string, unknown>
 	): Promise<SendEventResponse> {
 		const encoded = encodeURIComponent(roomId);
-		return this.request(
-			'PUT',
-			`/_matrix/client/v3/rooms/${encoded}/state/${encodeURIComponent(eventType)}/${encodeURIComponent(stateKey)}`,
-			{
-				headers: this.authHeaders(),
-				body: content
-			}
-		);
+		const path = stateKey
+			? `/_matrix/client/v3/rooms/${encoded}/state/${encodeURIComponent(eventType)}/${encodeURIComponent(stateKey)}`
+			: `/_matrix/client/v3/rooms/${encoded}/state/${encodeURIComponent(eventType)}`;
+		return this.request('PUT', path, {
+			headers: this.authHeaders(),
+			body: content
+		});
 	}
 
 	// ── Hierarchy ─────────────────────────────────────────────────

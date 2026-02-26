@@ -132,6 +132,25 @@ pub async fn set_state(
     }))
 }
 
+/// PUT /_matrix/client/v3/rooms/{roomId}/state/{eventType}  (empty state key)
+pub async fn set_state_empty_key(
+    state: State<AppState>,
+    auth: AuthUser,
+    Path((room_id, event_type)): Path<(String, String)>,
+    body: Json<serde_json::Value>,
+) -> Result<Json<SendEventResponse>, ApiError> {
+    set_state(state, auth, Path((room_id, event_type, String::new())), body).await
+}
+
+/// GET /_matrix/client/v3/rooms/{roomId}/state/{eventType}  (empty state key)
+pub async fn get_state_event_empty_key(
+    state: State<AppState>,
+    auth: AuthUser,
+    Path((room_id, event_type)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    get_state_event(state, auth, Path((room_id, event_type, String::new()))).await
+}
+
 /// GET /_matrix/client/v3/rooms/{roomId}/state/{eventType}/{stateKey}
 pub async fn get_state_event(
     State(state): State<AppState>,

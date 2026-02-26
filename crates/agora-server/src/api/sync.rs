@@ -41,7 +41,15 @@ pub async fn sync(
             }
         }
         if !events.is_empty() {
-            let state_events = state.store.get_state_events(room_id).await?;
+            let state_events = if since == 0 {
+                state.store.get_state_events(room_id).await?
+            } else {
+                events
+                    .iter()
+                    .filter(|e| e.state_key.is_some())
+                    .cloned()
+                    .collect()
+            };
             join_map.insert(
                 room_id.clone(),
                 JoinedRoom {
@@ -51,7 +59,7 @@ pub async fn sync(
                         limited: false,
                     },
                     state: RoomState {
-                        events: if since == 0 { state_events } else { vec![] },
+                        events: state_events,
                     },
                 },
             );
@@ -115,6 +123,9 @@ pub async fn sync(
                             state: RoomState::default(),
                         }
                     });
+                    if sync_event.event.state_key.is_some() {
+                        entry.state.events.push(sync_event.event.clone());
+                    }
                     entry.timeline.events.push(sync_event.event);
                     got_event = true;
                 }

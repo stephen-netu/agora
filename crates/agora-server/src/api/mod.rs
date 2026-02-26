@@ -93,6 +93,10 @@ pub fn router(state: AppState) -> Router {
             "/v3/rooms/{room_id}/state/{event_type}/{state_key}",
             put(events::set_state).get(events::get_state_event),
         )
+        .route(
+            "/v3/rooms/{room_id}/state/{event_type}",
+            put(events::set_state_empty_key).get(events::get_state_event_empty_key),
+        )
         .route("/v3/rooms/{room_id}/state", get(events::get_all_state))
         // Sync
         .route("/v3/sync", get(sync::sync))

@@ -10,13 +10,14 @@
 	import JoinRoomModal from '$lib/components/JoinRoomModal.svelte';
 	import SpaceSettingsModal from '$lib/components/SpaceSettingsModal.svelte';
 	import AddRoomToSpaceModal from '$lib/components/AddRoomToSpaceModal.svelte';
-	import ThemeSwitcher from '$lib/components/ThemeSwitcher.svelte';
+	import SettingsModal from '$lib/components/SettingsModal.svelte';
 
 	let { children } = $props();
 
 	let showCreateModal = $state(false);
 	let showCreateSpaceModal = $state(false);
 	let showJoinModal = $state(false);
+	let showSettings = $state(false);
 	let spaceSettingsId: string | null = $state(null);
 	let addRoomToSpaceId: string | null = $state(null);
 
@@ -51,12 +52,10 @@
 		/>
 
 		<div class="sidebar-footer">
-			<div class="user-info">
-				<span class="user-id">{authState.userId ?? ''}</span>
-			</div>
+			<span class="user-id">{authState.userId ?? ''}</span>
 			<div class="sidebar-actions">
-				<ThemeSwitcher />
-				<button class="btn-secondary logout-btn" onclick={handleLogout}>Logout</button>
+				<button class="footer-btn" onclick={() => (showSettings = true)} title="Settings">&#9881;</button>
+				<button class="footer-btn logout" onclick={handleLogout}>Logout</button>
 			</div>
 		</div>
 	</aside>
@@ -86,6 +85,10 @@
 	<AddRoomToSpaceModal spaceId={addRoomToSpaceId} onClose={() => (addRoomToSpaceId = null)} />
 {/if}
 
+{#if showSettings}
+	<SettingsModal onClose={() => (showSettings = false)} />
+{/if}
+
 <style>
 	.app-shell {
 		display: flex;
@@ -103,16 +106,12 @@
 	}
 
 	.sidebar-footer {
-		padding: 12px 16px;
+		padding: 10px 16px;
 		border-top: 1px solid var(--border);
 		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-
-	.user-info {
-		display: flex;
 		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
 	}
 
 	.user-id {
@@ -121,18 +120,34 @@
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		min-width: 0;
 	}
 
 	.sidebar-actions {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
+		gap: 4px;
+		flex-shrink: 0;
 	}
 
-	.logout-btn {
+	.footer-btn {
+		padding: 5px 10px;
 		font-size: 0.75rem;
-		padding: 6px 10px;
+		background: var(--surface);
+		color: var(--text-secondary);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		white-space: nowrap;
+	}
+
+	.footer-btn:hover {
+		background: var(--surface-hover);
+		color: var(--text);
+	}
+
+	.footer-btn.logout:hover {
+		color: var(--danger);
+		border-color: var(--danger);
 	}
 
 	.content {
