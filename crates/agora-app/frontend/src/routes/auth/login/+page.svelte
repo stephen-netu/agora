@@ -2,16 +2,20 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth';
 	import { sync } from '$lib/stores/sync';
+	import { api } from '$lib/api';
 	import ThemeSwitcher from '$lib/components/ThemeSwitcher.svelte';
 
+	let homeserver = $state(api.getBaseUrl());
 	let username = $state('');
 	let password = $state('');
 	let error = $state('');
 	let loading = $state(false);
+	let showAdvanced = $state(false);
 
 	async function handleLogin() {
 		error = '';
 		loading = true;
+		api.setBaseUrl(homeserver);
 		try {
 			await auth.login(username, password);
 			sync.start();
@@ -53,6 +57,24 @@
 					autocomplete="current-password"
 				/>
 			</div>
+
+			<button
+				type="button"
+				class="advanced-toggle"
+				onclick={() => (showAdvanced = !showAdvanced)}
+			>{showAdvanced ? 'Hide' : 'Homeserver'}</button>
+
+			{#if showAdvanced}
+				<div class="field">
+					<label for="homeserver">Homeserver URL</label>
+					<input
+						id="homeserver"
+						type="url"
+						bind:value={homeserver}
+						placeholder="http://localhost:8008"
+					/>
+				</div>
+			{/if}
 
 			{#if error}
 				<p class="error">{error}</p>
@@ -119,6 +141,20 @@
 		font-weight: 500;
 		color: var(--text-secondary);
 		margin-bottom: 6px;
+	}
+
+	.advanced-toggle {
+		background: none;
+		border: none;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		padding: 0;
+		margin-bottom: 12px;
+		cursor: pointer;
+	}
+
+	.advanced-toggle:hover {
+		color: var(--accent);
 	}
 
 	.error {

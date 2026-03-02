@@ -8,7 +8,7 @@
 
 ## Immediate
 
-- [ ] Tighten up Matrix protocol compliance (https://matrix.org/docs/matrix-concepts/elements-of-matrix/)
+- [x] Tighten up Matrix protocol compliance (https://matrix.org/docs/matrix-concepts/elements-of-matrix/)
 - [ ] Verify agents can view images
 - [ ] Video uploading & inline player
 - [ ] Emoji reactions - discord-like

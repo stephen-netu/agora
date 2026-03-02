@@ -3,6 +3,7 @@
 	import { theme } from '$lib/stores/theme';
 	import { themes, type ThemeId } from '$lib/themes';
 	import { auth } from '$lib/stores/auth';
+	import { api } from '$lib/api';
 	import { getIdentityKeys } from '$lib/crypto';
 
 	interface Props {
@@ -14,9 +15,10 @@
 	let currentTheme: ThemeId = $state('dark');
 	theme.subscribe((v) => (currentTheme = v));
 
-	let activeTab: 'appearance' | 'encryption' = $state('appearance');
+	let activeTab: 'appearance' | 'encryption' | 'connection' = $state('appearance');
 	let deviceId = $state('');
 	let fingerprint = $state('');
+	let homeserverUrl = $state(api.getBaseUrl());
 
 	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; });
 
@@ -49,6 +51,11 @@
 					class:active={activeTab === 'encryption'}
 					onclick={() => (activeTab = 'encryption')}
 				>Encryption</button>
+				<button
+					class="tab"
+					class:active={activeTab === 'connection'}
+					onclick={() => (activeTab = 'connection')}
+				>Connection</button>
 			</nav>
 
 			<div class="tab-content">
@@ -85,6 +92,12 @@
 								</button>
 							{/each}
 						</div>
+					</div>
+				{:else if activeTab === 'connection'}
+					<div class="setting-group">
+						<label class="setting-label">Homeserver URL</label>
+						<code class="mono-value">{homeserverUrl}</code>
+						<p class="setting-hint">Set during login. Log out and back in to change.</p>
 					</div>
 				{/if}
 			</div>

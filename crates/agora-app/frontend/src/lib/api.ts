@@ -81,12 +81,30 @@ export class ApiError extends Error {
 	}
 }
 
+const HOMESERVER_KEY = 'agora-homeserver';
+const DEFAULT_HOMESERVER = 'http://localhost:8008';
+
 export class AgoraApi {
 	private baseUrl: string;
 	private token: string | null = null;
 
-	constructor(baseUrl: string = 'http://localhost:8008') {
-		this.baseUrl = baseUrl.replace(/\/+$/, '');
+	constructor(baseUrl?: string) {
+		const stored =
+			typeof localStorage !== 'undefined'
+				? localStorage.getItem(HOMESERVER_KEY)
+				: null;
+		this.baseUrl = (baseUrl ?? stored ?? DEFAULT_HOMESERVER).replace(/\/+$/, '');
+	}
+
+	setBaseUrl(url: string) {
+		this.baseUrl = url.replace(/\/+$/, '');
+		if (typeof localStorage !== 'undefined') {
+			localStorage.setItem(HOMESERVER_KEY, this.baseUrl);
+		}
+	}
+
+	getBaseUrl(): string {
+		return this.baseUrl;
 	}
 
 	setToken(token: string | null) {
