@@ -50,10 +50,10 @@ The desktop app requires the server to be running.
 
 ```bash
 # Install frontend dependencies (first time only)
-cd crates/agora-app/frontend && npm install && cd ../../..
+cd agora-app/frontend && npm install && cd ../..
 
 # Build the frontend (required before first run)
-cd crates/agora-app/frontend && npm run build && cd ../../..
+cd agora-app/frontend && npm run build && cd ../..
 
 # Launch the Tauri desktop app
 cargo run --bin agora-app

@@ -14,9 +14,9 @@ agora.toml
 media_store/
 
 # SvelteKit / Vite
-crates/agora-app/frontend/node_modules/
-crates/agora-app/frontend/.svelte-kit/
-crates/agora-app/frontend/build/
+agora-app/frontend/node_modules/
+agora-app/frontend/.svelte-kit/
+agora-app/frontend/build/
 
 # OS files
 .DS_Store
