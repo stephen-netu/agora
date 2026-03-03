@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/agora-core",
-    "crates/agora-server",
-    "crates/agora-cli",
-    "crates/agora-app",
+    "agora-core",
+    "agora-server",
+    "agora-cli",
+    "agora-app",
 ]
 
 [workspace.package]
@@ -14,7 +14,7 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/ethee/agora"
 
 [workspace.dependencies]
-agora-core = { path = "crates/agora-core" }
+agora-core = { path = "agora-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -24,3 +24,22 @@ uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+rust_2018_idioms = "warn"
+unused_import_braces = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
