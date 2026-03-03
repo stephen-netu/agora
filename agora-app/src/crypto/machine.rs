@@ -2,15 +2,19 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 use vodozemac::megolm::{
-    GroupSession as OutboundGroupSession, GroupSessionPickle, InboundGroupSession,
-    InboundGroupSessionPickle, MegolmMessage, SessionConfig, SessionKey,
+    GroupSession as OutboundGroupSession, InboundGroupSession, MegolmMessage, SessionConfig,
+    SessionKey,
 };
 use vodozemac::olm::{
     Account, AccountPickle, OlmMessage, PreKeyMessage, Session as OlmSession,
-    SessionConfig as OlmSessionConfig, SessionPickle,
+    SessionConfig as OlmSessionConfig,
 };
 use vodozemac::Curve25519PublicKey;
 
+use super::sessions::{
+    pickle_inbound_group, pickle_olm_session, pickle_outbound_group, unpickle_inbound_group,
+    unpickle_olm_session, unpickle_outbound_group,
+};
 use super::store::{CryptoStore, InboundGroupSessionData, OutboundGroupSessionData};
 
 const MAX_OTK_COUNT: u64 = 50;
@@ -67,36 +71,6 @@ fn unpickle_account(s: &str) -> Result<Account, String> {
     Ok(Account::from_pickle(pickle))
 }
 
-fn pickle_olm_session(session: &OlmSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
-}
-
-fn unpickle_olm_session(s: &str) -> Result<OlmSession, String> {
-    let pickle: SessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle olm session: {e}"))?;
-    Ok(OlmSession::from_pickle(pickle))
-}
-
-fn pickle_outbound_group(session: &OutboundGroupSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
-}
-
-fn unpickle_outbound_group(s: &str) -> Result<OutboundGroupSession, String> {
-    let pickle: GroupSessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle outbound group: {e}"))?;
-    Ok(OutboundGroupSession::from_pickle(pickle))
-}
-
-fn pickle_inbound_group(session: &InboundGroupSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
-}
-
-fn unpickle_inbound_group(s: &str) -> Result<InboundGroupSession, String> {
-    let pickle: InboundGroupSessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle inbound group: {e}"))?;
-    Ok(InboundGroupSession::from_pickle(pickle))
-}
-
 impl CryptoMachine {
     pub fn new(data_dir: &std::path::Path, user_id: &str, device_id: &str) -> Self {
         let mut store = CryptoStore::open(data_dir, user_id, device_id);
@@ -113,13 +87,16 @@ impl CryptoMachine {
             account,
             store,
         };
-        machine.persist_account();
+        let _ = machine.persist_account();
         machine
     }
 
-    fn persist_account(&mut self) {
+    fn persist_account(&mut self) -> Result<(), String> {
         self.store.data.account_pickle = Some(pickle_account(&self.account));
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist account: {e}"))?;
+        Ok(())
     }
 
     pub fn identity_keys(&self) -> (String, String) {
@@ -191,7 +168,7 @@ impl CryptoMachine {
         }
 
         self.account.mark_keys_as_published();
-        self.persist_account();
+        let _ = self.persist_account();
         result
     }
 
@@ -229,8 +206,10 @@ impl CryptoMachine {
             .get_mut(room_id)
             .unwrap();
         data.message_count += 1;
-        data.pickle = pickle_outbound_group(&session);
-        self.store.save().ok();
+        data.pickle = pickle_outbound_group(&session)?;
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
 
         Ok(EncryptedPayload {
             algorithm: "m.megolm.v1.aes-sha2".to_owned(),
@@ -265,7 +244,7 @@ impl CryptoMachine {
         self.store.data.inbound_group_sessions.insert(
             igs_key,
             InboundGroupSessionData {
-                pickle: pickle_inbound_group(&inbound),
+                pickle: pickle_inbound_group(&inbound)?,
                 sender_key: sender_key.clone(),
                 signing_key: None,
                 room_id: room_id.to_owned(),
@@ -275,7 +254,7 @@ impl CryptoMachine {
         self.store.data.outbound_group_sessions.insert(
             room_id.to_owned(),
             OutboundGroupSessionData {
-                pickle: pickle_outbound_group(&session),
+                pickle: pickle_outbound_group(&session)?,
                 session_id,
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -286,7 +265,9 @@ impl CryptoMachine {
         );
 
         self.store.data.shared_sessions.remove(room_id);
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
         Ok(session)
     }
 
@@ -329,7 +310,12 @@ impl CryptoMachine {
             .collect()
     }
 
-    pub fn mark_session_shared(&mut self, room_id: &str, user_id: &str, device_id: &str) {
+    pub fn mark_session_shared(
+        &mut self,
+        room_id: &str,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<(), String> {
         let key = CryptoStore::shared_device_key(user_id, device_id);
         self.store
             .data
@@ -337,7 +323,10 @@ impl CryptoMachine {
             .entry(room_id.to_owned())
             .or_default()
             .push(key);
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
+        Ok(())
     }
 
     // --- Olm: encrypt to-device message ---
@@ -353,9 +342,11 @@ impl CryptoMachine {
 
         self.store.data.olm_sessions.insert(
             recipient_curve_key.to_owned(),
-            vec![pickle_olm_session(&session)],
+            vec![pickle_olm_session(&session)?],
         );
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist olm state: {e}"))?;
 
         let (msg_type, body) = match olm_message {
             OlmMessage::PreKey(m) => (0u8, m.to_base64()),
@@ -407,8 +398,8 @@ impl CryptoMachine {
             .olm_sessions
             .entry(their_curve_key.to_owned())
             .or_default()
-            .push(pickle_olm_session(&session));
-        self.persist_account();
+            .push(pickle_olm_session(&session)?);
+        self.persist_account()?;
         Ok(())
     }
 
@@ -440,11 +431,14 @@ impl CryptoMachine {
                     Err(_) => continue,
                 };
                 if let Ok(plaintext_bytes) = session.decrypt(&olm_message) {
+                    self.store.data.olm_sessions.insert(
+                        sender_key.to_owned(),
+                        vec![pickle_olm_session(&session)
+                            .map_err(|e| format!("persist olm state: {e}"))?],
+                    );
                     self.store
-                        .data
-                        .olm_sessions
-                        .insert(sender_key.to_owned(), vec![pickle_olm_session(&session)]);
-                    self.store.save().ok();
+                        .save()
+                        .map_err(|e| format!("persist olm state: {e}"))?;
                     return String::from_utf8(plaintext_bytes)
                         .map_err(|e| format!("invalid utf8: {e}"));
                 }
@@ -458,11 +452,12 @@ impl CryptoMachine {
                     .create_inbound_session(their_curve, prekey)
                     .map_err(|e| format!("create inbound session: {e}"))?;
                 let session = result.session;
-                self.store
-                    .data
-                    .olm_sessions
-                    .insert(sender_key.to_owned(), vec![pickle_olm_session(&session)]);
-                self.persist_account();
+                self.store.data.olm_sessions.insert(
+                    sender_key.to_owned(),
+                    vec![pickle_olm_session(&session)
+                        .map_err(|e| format!("persist olm state: {e}"))?],
+                );
+                self.persist_account()?;
                 return String::from_utf8(result.plaintext)
                     .map_err(|e| format!("invalid utf8: {e}"));
             }
@@ -488,13 +483,15 @@ impl CryptoMachine {
         self.store.data.inbound_group_sessions.insert(
             composite,
             InboundGroupSessionData {
-                pickle: pickle_inbound_group(&inbound),
+                pickle: pickle_inbound_group(&inbound)?,
                 sender_key: sender_key.to_owned(),
                 signing_key: None,
                 room_id: room_id.to_owned(),
             },
         );
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
         Ok(())
     }
 
@@ -522,9 +519,11 @@ impl CryptoMachine {
             .map_err(|e| format!("decrypt: {e}"))?;
 
         if let Some(entry) = self.store.data.inbound_group_sessions.get_mut(&composite) {
-            entry.pickle = pickle_inbound_group(&session);
+            entry.pickle = pickle_inbound_group(&session)?;
         }
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
 
         let plaintext_str =
             String::from_utf8(result.plaintext).map_err(|e| format!("invalid utf8: {e}"))?;

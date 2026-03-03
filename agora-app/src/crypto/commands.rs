@@ -130,7 +130,9 @@ pub fn mark_keys_shared(
 ) -> Result<(), String> {
     let mut guard = state.0.lock().unwrap();
     let machine = guard.as_mut().ok_or("crypto not initialized")?;
-    machine.mark_session_shared(&room_id, &user_id, &device_id);
+    machine
+        .mark_session_shared(&room_id, &user_id, &device_id)
+        .map_err(|e| format!("mark session shared: {e}"))?;
     Ok(())
 }
 

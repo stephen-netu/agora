@@ -1,9 +1,5 @@
 //! Key management for E2EE
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-
 use super::store::CryptoStore;
 
 /// Information about a device
@@ -16,7 +12,7 @@ pub struct DeviceInfo {
 }
 
 /// Room key content for sharing
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct RoomKeyContent {
     pub algorithm: String,
     pub room_id: String,

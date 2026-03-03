@@ -10,9 +10,8 @@ impl SqliteStore {
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
         let result = sqlx::query(
-            "INSERT INTO events (event_id, room_id, sender, event_type, state_key, content, origin_server_ts, stream_ordering)
-             VALUES (?, ?, ?, ?, ?, ?, ?,
-                     (SELECT COALESCE(MAX(stream_ordering), 0) + 1 FROM events))
+            "INSERT INTO events (event_id, room_id, sender, event_type, state_key, content, origin_server_ts)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              RETURNING stream_ordering",
         )
         .bind(event.event_id.as_str())

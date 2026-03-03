@@ -28,6 +28,11 @@ impl SqliteStore {
             .await
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
+        sqlx::query("PRAGMA foreign_keys = ON;")
+            .execute(&pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
         let store = Self { pool };
         store.run_migrations().await?;
         Ok(store)
@@ -149,7 +154,9 @@ impl SqliteStore {
         }
 
         for sql in &alter_statements {
-            let _ = sqlx::query(sql).execute(&self.pool).await;
+            if let Err(e) = sqlx::query(sql).execute(&self.pool).await {
+                tracing::warn!(error = %e, sql = %sql, "migration step failed (may be already applied)");
+            }
         }
 
         Ok(())

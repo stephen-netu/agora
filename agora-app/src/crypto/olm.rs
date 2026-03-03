@@ -32,9 +32,11 @@ impl<'a> OlmManager<'a> {
 
         self.store.data.olm_sessions.insert(
             recipient_curve_key.to_owned(),
-            vec![pickle_olm_session(&session)],
+            vec![pickle_olm_session(&session)?],
         );
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist olm state: {e}"))?;
 
         let (msg_type, body) = match olm_message {
             OlmMessage::PreKey(m) => (0u8, m.to_base64()),
@@ -77,7 +79,7 @@ impl<'a> OlmManager<'a> {
             .olm_sessions
             .entry(their_curve_key.to_owned())
             .or_default()
-            .push(pickle_olm_session(&session));
+            .push(pickle_olm_session(&session)?);
         Ok(())
     }
 
@@ -108,11 +110,14 @@ impl<'a> OlmManager<'a> {
                     Err(_) => continue,
                 };
                 if let Ok(plaintext_bytes) = session.decrypt(&olm_message) {
+                    self.store.data.olm_sessions.insert(
+                        sender_key.to_owned(),
+                        vec![pickle_olm_session(&session)
+                            .map_err(|e| format!("persist olm state: {e}"))?],
+                    );
                     self.store
-                        .data
-                        .olm_sessions
-                        .insert(sender_key.to_owned(), vec![pickle_olm_session(&session)]);
-                    self.store.save().ok();
+                        .save()
+                        .map_err(|e| format!("persist olm state: {e}"))?;
                     return String::from_utf8(plaintext_bytes)
                         .map_err(|e| format!("invalid utf8: {e}"));
                 }
@@ -126,10 +131,11 @@ impl<'a> OlmManager<'a> {
                     .create_inbound_session(their_curve, prekey)
                     .map_err(|e| format!("create inbound session: {e}"))?;
                 let session = result.session;
-                self.store
-                    .data
-                    .olm_sessions
-                    .insert(sender_key.to_owned(), vec![pickle_olm_session(&session)]);
+                self.store.data.olm_sessions.insert(
+                    sender_key.to_owned(),
+                    vec![pickle_olm_session(&session)
+                        .map_err(|e| format!("persist olm state: {e}"))?],
+                );
                 return String::from_utf8(result.plaintext)
                     .map_err(|e| format!("invalid utf8: {e}"));
             }
