@@ -183,6 +183,29 @@ function createRoomsStore() {
 
 export const rooms = createRoomsStore();
 
+export interface InvitedRoomInfo {
+	id: string;
+	name: string;
+	inviter: string;
+}
+
+export const invitedRooms = writable<InvitedRoomInfo[]>([]);
+
+export function processInvites(syncInvite: Record<string, { invite_state?: { events: RoomEvent[] } }>) {
+	const list: InvitedRoomInfo[] = [];
+	for (const [roomId, data] of Object.entries(syncInvite)) {
+		const events = data.invite_state?.events ?? [];
+		const nameEvent = events.find((e) => e.type === 'm.room.name');
+		const name = (nameEvent?.content?.name as string) ?? '(unnamed)';
+		const memberEvent = events.find(
+			(e) => e.type === 'm.room.member' && e.content?.membership === 'invite'
+		);
+		const inviter = memberEvent?.sender ?? '';
+		list.push({ id: roomId, name, inviter });
+	}
+	invitedRooms.set(list);
+}
+
 export const roomList = derived(rooms, ($rooms) =>
 	Array.from($rooms.values()).sort((a, b) => a.name.localeCompare(b.name))
 );

@@ -144,8 +144,15 @@
 			</div>
 		{:else if event.type === 'm.room.member'}
 			<div class="system-message">
-				{senderName(event.sender)}
-				{event.content.membership === 'join' ? 'joined' : 'left'}
+				{#if event.content.membership === 'invite'}
+					{senderName(event.sender)} invited {senderName(event.state_key ?? '')}
+				{:else if event.content.membership === 'join'}
+					{senderName(event.state_key ?? event.sender)} joined
+				{:else if event.content.membership === 'ban'}
+					{senderName(event.state_key ?? '')} was banned by {senderName(event.sender)}
+				{:else}
+					{senderName(event.state_key ?? event.sender)} left
+				{/if}
 			</div>
 		{/if}
 	{/each}

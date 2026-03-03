@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '$lib/api';
-import { rooms } from './rooms';
+import { rooms, processInvites } from './rooms';
 
 export interface SyncState {
 	running: boolean;
@@ -69,6 +69,10 @@ function createSyncStore() {
 				const syncResp = await api.sync(since, since ? 30000 : 0);
 
 				rooms.processSyncResponse(syncResp);
+
+				if (syncResp.rooms.invite && Object.keys(syncResp.rooms.invite).length > 0) {
+					processInvites(syncResp.rooms.invite as Record<string, any>);
+				}
 
 				const toDeviceEvents = syncResp.to_device?.events ?? [];
 				const otkCounts = syncResp.device_one_time_keys_count ?? {};

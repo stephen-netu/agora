@@ -1,15 +1,37 @@
 <script lang="ts">
-	import { spaceList, orphanRoomList, rooms, type Room } from '$lib/stores/rooms';
+	import { spaceList, orphanRoomList, rooms, invitedRooms, type Room, type InvitedRoomInfo } from '$lib/stores/rooms';
 	import { api } from '$lib/api';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 
 	let spaces: Room[] = $state([]);
 	let orphanRooms: Room[] = $state([]);
 	let allRoomsMap = $state(new Map<string, Room>());
+	let invites: InvitedRoomInfo[] = $state([]);
 
 	spaceList.subscribe((v) => (spaces = v));
 	orphanRoomList.subscribe((v) => (orphanRooms = v));
 	rooms.subscribe((v) => (allRoomsMap = v));
+	invitedRooms.subscribe((v) => (invites = v));
+
+	async function acceptInvite(roomId: string) {
+		try {
+			await api.joinRoom(roomId);
+			invitedRooms.update((list) => list.filter((r) => r.id !== roomId));
+			goto(`/rooms/${encodeURIComponent(roomId)}`);
+		} catch (e) {
+			console.error('Failed to accept invite:', e);
+		}
+	}
+
+	async function declineInvite(roomId: string) {
+		try {
+			await api.leaveRoom(roomId);
+			invitedRooms.update((list) => list.filter((r) => r.id !== roomId));
+		} catch (e) {
+			console.error('Failed to decline invite:', e);
+		}
+	}
 
 	let expandedSpaces = $state(new Set<string>());
 
@@ -62,7 +84,23 @@
 	</div>
 
 	<div class="rooms-scroll">
-		{#if spaces.length === 0 && orphanRooms.length === 0}
+		{#if invites.length > 0}
+			<div class="section-label">Invites</div>
+			{#each invites as invite (invite.id)}
+				<div class="invite-item">
+					<div class="invite-info">
+						<span class="invite-name">{invite.name}</span>
+						<span class="invite-from">from {invite.inviter.replace(/@([^:]+).*/, '$1')}</span>
+					</div>
+					<div class="invite-actions">
+						<button class="invite-accept" onclick={() => acceptInvite(invite.id)} title="Accept">&#10003;</button>
+						<button class="invite-decline" onclick={() => declineInvite(invite.id)} title="Decline">&#10005;</button>
+					</div>
+				</div>
+			{/each}
+		{/if}
+
+		{#if spaces.length === 0 && orphanRooms.length === 0 && invites.length === 0}
 			<p class="empty">No rooms yet</p>
 		{/if}
 
@@ -205,6 +243,75 @@
 		letter-spacing: 0.05em;
 		color: var(--text-muted);
 		padding: 12px 12px 4px;
+	}
+
+	.invite-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 12px;
+		border-radius: 8px;
+		background: var(--surface);
+		margin-bottom: 4px;
+	}
+
+	.invite-info {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.invite-name {
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.invite-from {
+		font-size: 0.65rem;
+		color: var(--text-muted);
+	}
+
+	.invite-actions {
+		display: flex;
+		gap: 4px;
+		flex-shrink: 0;
+	}
+
+	.invite-accept, .invite-decline {
+		width: 24px;
+		height: 24px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		font-size: 0.75rem;
+		background: var(--bg);
+	}
+
+	.invite-accept {
+		color: var(--accent);
+	}
+
+	.invite-accept:hover {
+		background: var(--accent);
+		color: var(--accent-text);
+		border-color: var(--accent);
+	}
+
+	.invite-decline {
+		color: var(--text-muted);
+	}
+
+	.invite-decline:hover {
+		background: var(--danger);
+		color: white;
+		border-color: var(--danger);
 	}
 
 	.empty {
