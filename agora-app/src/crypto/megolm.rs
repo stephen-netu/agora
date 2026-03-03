@@ -65,8 +65,10 @@ impl<'a> MegolmManager<'a> {
             .get_mut(room_id)
             .unwrap();
         data.message_count += 1;
-        data.pickle = pickle_outbound_group(&session);
-        self.store.save().ok();
+        data.pickle = pickle_outbound_group(&session)?;
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
 
         Ok((
             "m.megolm.v1.aes-sha2".to_owned(),
@@ -104,7 +106,7 @@ impl<'a> MegolmManager<'a> {
         self.store.data.inbound_group_sessions.insert(
             igs_key,
             InboundGroupSessionData {
-                pickle: pickle_inbound_group(&inbound),
+                pickle: pickle_inbound_group(&inbound)?,
                 sender_key: self.sender_key.clone(),
                 signing_key: None,
                 room_id: room_id.to_owned(),
@@ -114,7 +116,7 @@ impl<'a> MegolmManager<'a> {
         self.store.data.outbound_group_sessions.insert(
             room_id.to_owned(),
             OutboundGroupSessionData {
-                pickle: pickle_outbound_group(&session),
+                pickle: pickle_outbound_group(&session)?,
                 session_id,
                 created_at: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -125,7 +127,9 @@ impl<'a> MegolmManager<'a> {
         );
 
         self.store.data.shared_sessions.remove(room_id);
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
         Ok(session)
     }
 
@@ -170,7 +174,12 @@ impl<'a> MegolmManager<'a> {
     }
 
     /// Mark a session as shared with a device
-    pub fn mark_session_shared(&mut self, room_id: &str, user_id: &str, device_id: &str) {
+    pub fn mark_session_shared(
+        &mut self,
+        room_id: &str,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<(), String> {
         let key = CryptoStore::shared_device_key(user_id, device_id);
         self.store
             .data
@@ -178,7 +187,10 @@ impl<'a> MegolmManager<'a> {
             .entry(room_id.to_owned())
             .or_default()
             .push(key);
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
+        Ok(())
     }
 
     /// Import a room key from a to-device event
@@ -197,13 +209,15 @@ impl<'a> MegolmManager<'a> {
         self.store.data.inbound_group_sessions.insert(
             composite,
             InboundGroupSessionData {
-                pickle: pickle_inbound_group(&inbound),
+                pickle: pickle_inbound_group(&inbound)?,
                 sender_key: sender_key.to_owned(),
                 signing_key: None,
                 room_id: room_id.to_owned(),
             },
         );
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
         Ok(())
     }
 
@@ -232,9 +246,11 @@ impl<'a> MegolmManager<'a> {
             .map_err(|e| format!("decrypt: {e}"))?;
 
         if let Some(entry) = self.store.data.inbound_group_sessions.get_mut(&composite) {
-            entry.pickle = pickle_inbound_group(&session);
+            entry.pickle = pickle_inbound_group(&session)?;
         }
-        self.store.save().ok();
+        self.store
+            .save()
+            .map_err(|e| format!("persist megolm state: {e}"))?;
 
         let plaintext_str =
             String::from_utf8(result.plaintext).map_err(|e| format!("invalid utf8: {e}"))?;

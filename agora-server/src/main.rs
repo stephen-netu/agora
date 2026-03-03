@@ -29,7 +29,7 @@ use crate::store::sqlite::SqliteStore;
 use crate::sync_engine::SyncEngine;
 
 /// Resolve a path relative to the user's data directory if it's not absolute.
-/// Returns the resolved path and whether parent directories were created.
+/// Falls back to current working directory if data directory is unavailable.
 fn resolve_data_path(path: &str, app_name: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(path);
 
@@ -38,14 +38,30 @@ fn resolve_data_path(path: &str, app_name: &str) -> anyhow::Result<PathBuf> {
     }
 
     let data_dir = dirs::data_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine user data directory"))?
+        .or_else(|| {
+            tracing::warn!(
+                "data directory not available, using current directory as fallback"
+            );
+            std::env::current_dir().ok()
+        })
+        .ok_or_else(|| anyhow::anyhow!("could not determine data directory"))?
         .join(app_name);
 
     Ok(data_dir.join(path))
 }
 
+/// Check if a SQLite URI is a special in-memory URI that should not be modified.
+fn is_special_sqlite_uri(uri: &str) -> bool {
+    uri.contains(":memory:") || uri.contains("mode=memory")
+}
+
 /// Extract the file path from a SQLite URI, handling various formats.
+/// Returns None for special URIs (in-memory) that should not be modified.
 fn extract_sqlite_path(uri: &str) -> Option<String> {
+    if is_special_sqlite_uri(uri) {
+        return None;
+    }
+
     if uri.starts_with("sqlite:") {
         let path_part = &uri[7..];
         let path_only = path_part.split('?').next().unwrap_or(path_part);
@@ -71,7 +87,15 @@ fn build_sqlite_uri(base_uri: &str, new_path: &PathBuf) -> String {
 }
 
 /// Resolve a SQLite URI to use the data directory if the path is relative.
+/// Special in-memory URIs are passed through unchanged.
+/// Falls back to current working directory if data directory is unavailable.
 async fn resolve_sqlite_uri(uri: &str, app_name: &str) -> anyhow::Result<String> {
+    // Special SQLite URIs (in-memory) should be passed through unchanged
+    if is_special_sqlite_uri(uri) {
+        tracing::info!("using special SQLite URI without modification");
+        return Ok(uri.to_owned());
+    }
+
     let db_path_str = extract_sqlite_path(uri)
         .ok_or_else(|| anyhow::anyhow!("invalid SQLite URI"))?;
 
@@ -83,7 +107,13 @@ async fn resolve_sqlite_uri(uri: &str, app_name: &str) -> anyhow::Result<String>
     }
 
     let data_dir = dirs::data_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine user data directory"))?
+        .or_else(|| {
+            tracing::warn!(
+                "data directory not available, using current directory as fallback"
+            );
+            std::env::current_dir().ok()
+        })
+        .ok_or_else(|| anyhow::anyhow!("could not determine data directory"))?
         .join(app_name);
 
     let resolved_path = data_dir.join(&db_path);
@@ -109,6 +139,10 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = std::env::args().nth(1);
     let config = Config::load(config_path.as_deref())?;
+
+    if config.database.backend != "sqlite" {
+        anyhow::bail!("unsupported database backend: {}, only 'sqlite' is supported", config.database.backend);
+    }
 
     tracing::info!(
         bind = %config.server.bind,

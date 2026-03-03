@@ -1,6 +1,8 @@
 @echo off
+setlocal enabledelayedexpansion
+set "ROOT=%~dp0"
 echo Starting Agora (Fast Mode)...
-cd /d "D:\Projects\Agora\agora"
+cd /d "%ROOT%"
 
 :: Check if server is already running
 tasklist /FI "IMAGENAME eq agora-server.exe" 2>nul | find /I "agora-server.exe" >nul
@@ -26,13 +28,13 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 :: Start the server in a new window
-start "Agora Server" "D:\Projects\Agora\agora\target\debug\agora-server.exe"
+start "Agora Server" "%ROOT%target\debug\agora-server.exe"
 
 :: Wait for server to initialize
 timeout /t 2 /nobreak >nul
 
 :: Start the desktop app
-start "Agora Desktop" "D:\Projects\Agora\agora\target\debug\agora-app.exe"
+start "Agora Desktop" "%ROOT%target\debug\agora-app.exe"
 
 echo Agora launched!
 echo - Server: http://127.0.0.1:8008

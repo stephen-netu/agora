@@ -7,8 +7,8 @@ use vodozemac::megolm::{
 use vodozemac::olm::{Session as OlmSession, SessionPickle};
 
 /// Pickle an Olm session for storage
-pub fn pickle_olm_session(session: &OlmSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
+pub fn pickle_olm_session(session: &OlmSession) -> Result<String, String> {
+    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle olm session: {e}"))
 }
 
 /// Unpickle an Olm session from storage
@@ -19,8 +19,8 @@ pub fn unpickle_olm_session(s: &str) -> Result<OlmSession, String> {
 }
 
 /// Pickle an outbound group session for storage
-pub fn pickle_outbound_group(session: &OutboundGroupSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
+pub fn pickle_outbound_group(session: &OutboundGroupSession) -> Result<String, String> {
+    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle outbound group: {e}"))
 }
 
 /// Unpickle an outbound group session from storage
@@ -31,8 +31,8 @@ pub fn unpickle_outbound_group(s: &str) -> Result<OutboundGroupSession, String> 
 }
 
 /// Pickle an inbound group session for storage
-pub fn pickle_inbound_group(session: &InboundGroupSession) -> String {
-    serde_json::to_string(&session.pickle()).unwrap_or_default()
+pub fn pickle_inbound_group(session: &InboundGroupSession) -> Result<String, String> {
+    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle inbound group: {e}"))
 }
 
 /// Unpickle an inbound group session from storage
