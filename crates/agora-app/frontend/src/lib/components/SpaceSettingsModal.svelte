@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
+	import { auth } from '$lib/stores/auth';
 	import { rooms, type Room } from '$lib/stores/rooms';
 
 	interface Props {
@@ -12,6 +13,9 @@
 	let space: Room | undefined = $state();
 	let childRooms: Room[] = $state([]);
 	let addRoomId = $state('');
+	let inviteUsername = $state('');
+	let inviteChildren = $state(true);
+	let inviteStatus = $state('');
 	let error = $state('');
 	let loading = $state(false);
 	let allRooms = $state(new Map<string, Room>());
@@ -54,6 +58,43 @@
 		} catch (e) {
 			console.error('Failed to remove child:', e);
 		}
+	}
+
+	let currentUserId = $state('');
+	auth.subscribe((v) => { currentUserId = v.userId ?? ''; });
+
+	function resolveUserId(input: string): string {
+		const trimmed = input.trim();
+		if (trimmed.startsWith('@')) return trimmed;
+		const serverName = currentUserId.split(':').slice(1).join(':') || 'localhost';
+		return `@${trimmed}:${serverName}`;
+	}
+
+	async function handleInvite() {
+		if (!inviteUsername.trim()) return;
+		error = '';
+		inviteStatus = '';
+		loading = true;
+		const userId = resolveUserId(inviteUsername);
+		const targetRooms = [spaceId];
+		if (inviteChildren) {
+			for (const child of childRooms) {
+				targetRooms.push(child.id);
+			}
+		}
+		let succeeded = 0;
+		let failed = 0;
+		for (const rid of targetRooms) {
+			try {
+				await api.inviteUser(rid, userId);
+				succeeded++;
+			} catch {
+				failed++;
+			}
+		}
+		inviteStatus = `Invited ${userId} to ${succeeded} room(s)${failed > 0 ? `, ${failed} failed` : ''}`;
+		inviteUsername = '';
+		loading = false;
 	}
 
 	async function handleAvatarChange(e: Event) {
@@ -117,6 +158,25 @@
 			/>
 			<button type="submit" class="btn-primary" disabled={loading || !addRoomId.trim()}>Add</button>
 		</form>
+
+		<div class="invite-section">
+			<h4>Invite User</h4>
+			<form class="invite-form" onsubmit={(e) => { e.preventDefault(); handleInvite(); }}>
+				<input
+					type="text"
+					bind:value={inviteUsername}
+					placeholder="alice or @alice:localhost"
+				/>
+				<button type="submit" class="btn-primary" disabled={loading || !inviteUsername.trim()}>Invite</button>
+			</form>
+			<label class="invite-toggle">
+				<input type="checkbox" bind:checked={inviteChildren} />
+				<span>Also invite to all child rooms</span>
+			</label>
+			{#if inviteStatus}
+				<p class="invite-status">{inviteStatus}</p>
+			{/if}
+		</div>
 
 		{#if error}
 			<p class="error">{error}</p>
@@ -267,6 +327,50 @@
 
 	.add-child-form button {
 		flex-shrink: 0;
+	}
+
+	.invite-section {
+		margin-bottom: 12px;
+		padding-top: 12px;
+		border-top: 1px solid var(--border);
+	}
+
+	.invite-section h4 {
+		font-size: 0.8rem;
+		font-weight: 600;
+		margin-bottom: 8px;
+		color: var(--text-secondary);
+	}
+
+	.invite-form {
+		display: flex;
+		gap: 8px;
+		margin-bottom: 8px;
+	}
+
+	.invite-form input {
+		flex: 1;
+		font-size: 0.8rem;
+		padding: 8px 10px;
+	}
+
+	.invite-form button {
+		flex-shrink: 0;
+	}
+
+	.invite-toggle {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.invite-status {
+		font-size: 0.75rem;
+		color: var(--accent);
+		margin-top: 6px;
 	}
 
 	.error {

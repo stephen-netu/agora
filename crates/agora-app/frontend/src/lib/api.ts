@@ -222,6 +222,14 @@ export class AgoraApi {
 		});
 	}
 
+	async inviteUser(roomId: string, userId: string): Promise<void> {
+		const encoded = encodeURIComponent(roomId);
+		await this.request('POST', `/_matrix/client/v3/rooms/${encoded}/invite`, {
+			headers: this.authHeaders(),
+			body: { user_id: userId }
+		});
+	}
+
 	// ── State ─────────────────────────────────────────────────────
 
 	async setState(
