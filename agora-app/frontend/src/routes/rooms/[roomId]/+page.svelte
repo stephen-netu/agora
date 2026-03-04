@@ -4,9 +4,10 @@
 	import { api, type RoomEvent } from '$lib/api';
 	import { auth, type AuthState } from '$lib/stores/auth';
 	import { rooms, type Room } from '$lib/stores/rooms';
-	import { ensureRoomKeysShared, encryptMessage } from '$lib/crypto';
+	import { ensureRoomKeysShared, encryptMessage, appendSigchainAction } from '$lib/crypto';
 	import MessageList from '$lib/components/MessageList.svelte';
 	import MessageInput from '$lib/components/MessageInput.svelte';
+	import InviteUserModal from '$lib/components/InviteUserModal.svelte';
 
 	let roomId = $derived(decodeURIComponent(page.params.roomId));
 
@@ -38,18 +39,26 @@
 	async function handleSend(text: string) {
 		sending = true;
 		try {
+			const baseContent = { msgtype: 'm.text', body: text };
+
+			// Append a sigchain Action link for this outgoing message (non-fatal).
+			const proof = await appendSigchainAction('m.room.message', roomId, baseContent);
+
+			// Include sigchain_proof in the content if available, so verifiers
+			// can cross-reference the Action link.
+			const content: Record<string, unknown> = proof
+				? { ...baseContent, sigchain_proof: proof }
+				: { ...baseContent };
+
 			if (room?.encrypted) {
 				const userId = authState.userId ?? '';
 				await ensureRoomKeysShared(roomId, [userId]);
-				const encrypted = await encryptMessage(roomId, 'm.room.message', {
-					msgtype: 'm.text',
-					body: text
-				});
+				const encrypted = await encryptMessage(roomId, 'm.room.message', content);
 				if (encrypted) {
 					await api.sendEvent(roomId, 'm.room.encrypted', encrypted as unknown as Record<string, unknown>);
 				}
 			} else {
-				await api.sendMessage(roomId, text);
+				await api.sendEvent(roomId, 'm.room.message', content);
 			}
 		} catch (e) {
 			console.error('Failed to send message:', e);
@@ -64,12 +73,18 @@
 			const mxcUri = await api.uploadFile(file);
 			const isImage = file.type.startsWith('image/');
 			const msgtype = isImage ? 'm.image' : 'm.file';
-			const content = {
+			const baseContent: Record<string, unknown> = {
 				msgtype,
 				body: file.name,
 				url: mxcUri,
 				info: { mimetype: file.type, size: file.size }
 			};
+
+			// Append sigchain Action link for the file send (non-fatal).
+			const proof = await appendSigchainAction('m.room.message', roomId, baseContent);
+			const content: Record<string, unknown> = proof
+				? { ...baseContent, sigchain_proof: proof }
+				: { ...baseContent };
 
 			if (room?.encrypted) {
 				const userId = authState.userId ?? '';
@@ -91,6 +106,7 @@
 	let authState: AuthState = $state({ token: null, userId: null, deviceId: null, loading: false });
 	auth.subscribe((v) => (authState = v));
 
+	let showInviteModal = $state(false);
 	let showPinnedBar = $state(false);
 	let pinnedIds = $derived(room?.pinnedEvents ?? []);
 	let pinnedMessages = $derived(
@@ -164,6 +180,7 @@
 					title="{pinnedIds.length} pinned message(s)"
 				>&#128204; {pinnedIds.length}</button>
 			{/if}
+			<button class="btn-secondary invite-btn" onclick={() => (showInviteModal = true)}>Invite</button>
 			<button class="btn-secondary leave-btn" onclick={handleLeave}>Leave</button>
 			<button class="btn-danger delete-btn" onclick={handleDelete} title="Delete (creator only)">Delete</button>
 		</div>
@@ -192,6 +209,9 @@
 		onUnpin={handleUnpin}
 	/>
 	<MessageInput onSend={handleSend} onFileUpload={handleFileUpload} disabled={sending} />
+	{#if showInviteModal}
+		<InviteUserModal {roomId} onClose={() => (showInviteModal = false)} />
+	{/if}
 </div>
 
 <style>
@@ -241,7 +261,7 @@
 		padding: 6px 10px;
 	}
 
-	.leave-btn, .delete-btn {
+	.invite-btn, .leave-btn, .delete-btn {
 		font-size: 0.75rem;
 		padding: 6px 12px;
 	}

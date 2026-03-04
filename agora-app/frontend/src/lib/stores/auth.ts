@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import { api } from '$lib/api';
+import { initSigchain } from '$lib/crypto';
 
 const TOKEN_KEY = 'agora-token';
 const USER_KEY = 'agora-user';
@@ -40,6 +41,9 @@ async function initCryptoAndUploadKeys(userId: string, deviceId: string) {
 				await api.keysUpload({ one_time_keys: otks });
 			}
 		}
+
+		// Initialise (or restore) the sigchain identity after E2EE is ready.
+		await initSigchain();
 	} catch (e) {
 		console.error('E2EE init failed:', e);
 	}

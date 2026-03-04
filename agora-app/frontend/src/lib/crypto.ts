@@ -155,3 +155,82 @@ export async function getIdentityKeys(): Promise<{ curve25519: string; ed25519: 
 		return null;
 	}
 }
+
+// ── Sigchain ──────────────────────────────────────────────────────────────────
+
+export interface SigchainProof {
+	seqno: number;
+	agent_id: string;
+}
+
+/** Initialise (or restore) the sigchain identity. Safe to call on every startup. */
+export async function initSigchain(): Promise<void> {
+	try {
+		await tauriInvoke('init_sigchain');
+	} catch (e) {
+		console.error('sigchain: init failed:', e);
+	}
+}
+
+/** Return the hex-encoded AgentId for this device, or null if not initialised. */
+export async function getAgentId(): Promise<string | null> {
+	try {
+		return (await tauriInvoke('get_agent_id')) as string | null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Append an Action sigchain link for an outgoing event.
+ *
+ * Returns `{ seqno, agent_id }` to include as `sigchain_proof` in the event
+ * content. Returns null on any error — sending proceeds regardless.
+ *
+ * Call `checkSigchainLoop` first when `correlationPath` is non-empty.
+ */
+export async function appendSigchainAction(
+	eventType: string,
+	roomId: string,
+	content: Record<string, unknown>,
+	correlationPath: string[] = []
+): Promise<SigchainProof | null> {
+	try {
+		return (await tauriInvoke('append_sigchain_action', {
+			eventType,
+			roomId,
+			content,
+			correlationPath
+		})) as SigchainProof | null;
+	} catch (e) {
+		console.warn('sigchain: append_action failed (non-fatal):', e);
+		return null;
+	}
+}
+
+/**
+ * Returns true if `correlationPath` contains this agent's AgentId (S-05 loop).
+ * If true, call `appendSigchainRefusal` and surface an error instead of sending.
+ */
+export async function checkSigchainLoop(correlationPath: string[]): Promise<boolean> {
+	try {
+		return (await tauriInvoke('check_sigchain_loop', { correlationPath })) as boolean;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Append a Refusal sigchain link when a loop is detected.
+ * Non-fatal — errors are logged but do not block the calling flow.
+ */
+export async function appendSigchainRefusal(
+	refusedEventType: string,
+	correlationPath: string[]
+): Promise<void> {
+	try {
+		await tauriInvoke('append_sigchain_refusal', { refusedEventType, correlationPath });
+	} catch (e) {
+		console.warn('sigchain: append_refusal failed:', e);
+	}
+}

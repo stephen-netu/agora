@@ -14,6 +14,8 @@ use serde_json::Value;
 use agora_crypto::account::{Account, AgoraSignature};
 use agora_crypto::group::{GroupSessionKey, InboundGroupSession, OutboundGroupSession};
 use agora_crypto::timestamp::{SequenceTimestamp, TimestampProvider};
+use agora_crypto::{AgentId, AgentIdentity, Sigchain, SigchainBody, SigchainLink};
+use rand_core::{OsRng, RngCore};
 
 use super::sessions::{
     pickle_inbound_group, pickle_outbound_group, pickle_pairwise_session,
@@ -31,6 +33,10 @@ pub struct CryptoMachine {
     account: Account,
     store: CryptoStore,
     timestamp: Arc<dyn TimestampProvider>,
+    /// Agent identity for sigchain signing. `None` until `init_sigchain()`.
+    identity: Option<AgentIdentity>,
+    /// Append-only behavioral ledger. `None` until `init_sigchain()`.
+    chain: Option<Sigchain>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -86,12 +92,17 @@ impl CryptoMachine {
         // once the last sequence is persisted in the store.
         let timestamp: Arc<dyn TimestampProvider> = Arc::new(SequenceTimestamp::default());
 
+        // Load sigchain identity and chain from store if available.
+        let (identity, chain) = load_sigchain_from_store(&store);
+
         let mut machine = Self {
             user_id: user_id.to_owned(),
             device_id: device_id.to_owned(),
             account,
             store,
             timestamp,
+            identity,
+            chain,
         };
         machine.persist_account()?;
         Ok(machine)
@@ -102,6 +113,150 @@ impl CryptoMachine {
         self.store.data.account_pickle = Some(snap);
         self.store.save().map_err(|e| format!("persist account: {e}"))?;
         Ok(())
+    }
+
+    // ── Sigchain identity ─────────────────────────────────────────────────────
+
+    /// Initialise (or restore) the agent sigchain identity.
+    ///
+    /// Safe to call repeatedly — if already initialised, returns `Ok(())` immediately.
+    /// On first call: generates a fresh 32-byte seed via `OsRng`, creates a
+    /// genesis link, and persists both to the crypto store.
+    pub fn init_sigchain(&mut self) -> Result<(), String> {
+        if self.identity.is_some() {
+            return Ok(());
+        }
+
+        // Generate a fresh identity seed.
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+
+        let identity = AgentIdentity::from_seed(&seed);
+        let chain = Sigchain::genesis(&identity, vec![], None)
+            .map_err(|e| format!("sigchain genesis: {e}"))?;
+
+        // Persist seed (hex) and chain (JSON) into the crypto store.
+        let seed_hex = hex::encode(seed);
+        let chain_json =
+            serde_json::to_string(&chain).map_err(|e| format!("sigchain serialize: {e}"))?;
+
+        self.store.data.identity_seed_hex = Some(seed_hex);
+        self.store.data.sigchain_json = Some(chain_json);
+        self.store.save().map_err(|e| format!("persist sigchain: {e}"))?;
+
+        self.identity = Some(identity);
+        self.chain = Some(chain);
+        Ok(())
+    }
+
+    /// Return the hex-encoded `AgentId` if the sigchain is initialised.
+    pub fn agent_id_hex(&self) -> Option<String> {
+        self.chain.as_ref().map(|c| c.agent_id.to_hex())
+    }
+
+    /// Return `true` if `correlation_path` contains this agent's `AgentId`.
+    ///
+    /// Must be checked before `append_action_link` when the path is non-empty.
+    /// If `true`, call `append_refusal_link` instead and return an error.
+    pub fn has_loop_in_path(&self, correlation_path: &[AgentId]) -> bool {
+        match &self.chain {
+            Some(chain) => Sigchain::has_loop(&chain.agent_id, correlation_path),
+            None => false,
+        }
+    }
+
+    /// Append a `Refusal` link (loop detected) and persist it.
+    ///
+    /// Call when `has_loop_in_path()` returns `true`. Records the refusal
+    /// on-chain so it is auditable and non-repudiable.
+    pub fn append_refusal_link(
+        &mut self,
+        refused_event_type: &str,
+        correlation_path_snapshot: Vec<AgentId>,
+    ) -> Result<SigchainLink, String> {
+        let identity =
+            self.identity.as_ref().ok_or("sigchain not initialised — call init_sigchain()")?;
+        let chain =
+            self.chain.as_mut().ok_or("sigchain not initialised — call init_sigchain()")?;
+
+        if correlation_path_snapshot.len() > 16 {
+            return Err("correlation_path_snapshot exceeds 16-hop limit (S-05)".to_owned());
+        }
+
+        let timestamp = chain.len() as u64;
+
+        let body = SigchainBody::Refusal {
+            refused_event_type: refused_event_type.to_owned(),
+            reason: "loop detected: agent_id appears in correlation_path".to_owned(),
+            correlation_path_snapshot,
+            timestamp,
+        };
+
+        chain.append(body, identity).map_err(|e| format!("sigchain append refusal: {e}"))?;
+
+        let link = chain.links.last().expect("just appended").clone();
+
+        let chain_json =
+            serde_json::to_string(chain).map_err(|e| format!("sigchain serialize: {e}"))?;
+        self.store.data.sigchain_json = Some(chain_json);
+        self.store.save().map_err(|e| format!("persist sigchain: {e}"))?;
+
+        Ok(link)
+    }
+
+    /// Append an `Action` link to the local sigchain and persist it.
+    ///
+    /// - `event_type`: Matrix event type (e.g. `"m.room.message"`).
+    /// - `room_id`:    Matrix room ID — BLAKE3-hashed before storage.
+    /// - `content`:    Event content JSON — BLAKE3-hashed before storage.
+    /// - `correlation_path`: upstream `AgentId` chain (max 16, S-05).
+    ///
+    /// Returns the new link so the caller can publish it to the server.
+    pub fn append_action_link(
+        &mut self,
+        event_type: &str,
+        room_id: &str,
+        content: &Value,
+        correlation_path: Vec<AgentId>,
+    ) -> Result<SigchainLink, String> {
+        let identity =
+            self.identity.as_ref().ok_or("sigchain not initialised — call init_sigchain()")?;
+        let chain =
+            self.chain.as_mut().ok_or("sigchain not initialised — call init_sigchain()")?;
+
+        if correlation_path.len() > 16 {
+            return Err("correlation_path exceeds 16-hop limit (S-05)".to_owned());
+        }
+
+        let room_id_hash = *blake3::hash(room_id.as_bytes()).as_bytes();
+        let content_bytes =
+            serde_json::to_vec(content).map_err(|e| format!("serialize content: {e}"))?;
+        let content_hash = *blake3::hash(&content_bytes).as_bytes();
+
+        // S-02: timestamp = chain length before append (monotonically increasing).
+        let timestamp = chain.len() as u64;
+
+        let body = SigchainBody::Action {
+            event_type: event_type.to_owned(),
+            event_id_hash: [0u8; 32], // unknown until server assigns event_id
+            room_id_hash,
+            content_hash,
+            effect_hash: None,
+            timestamp,
+            correlation_path,
+        };
+
+        chain.append(body, identity).map_err(|e| format!("sigchain append: {e}"))?;
+
+        let link = chain.links.last().expect("just appended").clone();
+
+        // Persist updated chain.
+        let chain_json =
+            serde_json::to_string(chain).map_err(|e| format!("sigchain serialize: {e}"))?;
+        self.store.data.sigchain_json = Some(chain_json);
+        self.store.save().map_err(|e| format!("persist sigchain: {e}"))?;
+
+        Ok(link)
     }
 
     pub fn identity_keys(&self) -> (String, String) {
@@ -572,6 +727,7 @@ impl CryptoMachine {
     }
 
     fn handle_room_key(&mut self, content: &Value) -> Result<(), String> {
+
         let algorithm = content.get("algorithm").and_then(|v| v.as_str()).unwrap_or("");
         if algorithm != "m.agora.group.v1" {
             return Err(format!("unsupported room_key algorithm: {algorithm}"));
@@ -596,4 +752,38 @@ impl CryptoMachine {
 
         self.import_room_key(room_id, sender_key, session_id, session_key)
     }
+}
+
+// ── Sigchain helpers ───────────────────────────────────────────────────────────
+
+/// Attempt to restore the agent sigchain identity and chain from a persisted
+/// `CryptoStore`. Returns `(None, None)` if the store has no sigchain data yet.
+fn load_sigchain_from_store(store: &CryptoStore) -> (Option<AgentIdentity>, Option<Sigchain>) {
+    let seed_hex = match store.data.identity_seed_hex.as_deref() {
+        Some(s) => s,
+        None => return (None, None),
+    };
+
+    let seed_bytes = match hex::decode(seed_hex) {
+        Ok(b) => b,
+        Err(_) => return (None, None),
+    };
+
+    if seed_bytes.len() != 32 {
+        return (None, None);
+    }
+
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&seed_bytes);
+    let identity = AgentIdentity::from_seed(&seed);
+
+    let chain = match store.data.sigchain_json.as_deref() {
+        Some(json) => match serde_json::from_str::<Sigchain>(json) {
+            Ok(c) => c,
+            Err(_) => return (Some(identity), None),
+        },
+        None => return (Some(identity), None),
+    };
+
+    (Some(identity), Some(chain))
 }

@@ -96,6 +96,11 @@
 		return cached === null;
 	}
 
+	function sigchainSeqno(display: { type: string; content: Record<string, unknown> }): number | null {
+		const proof = display.content?.sigchain_proof as { seqno?: number } | undefined;
+		return typeof proof?.seqno === 'number' ? proof.seqno : null;
+	}
+
 	$effect(() => {
 		if (messages.length && container) {
 			tick().then(() => {
@@ -108,6 +113,7 @@
 <div class="message-list" bind:this={container}>
 	{#each messages as event (event.event_id)}
 		{@const display = getDisplayEvent(event)}
+		{@const seqno = sigchainSeqno(display)}
 		{#if isTextMessage(display) || isMediaMessage(display) || isEncryptedUndecrypted(event)}
 			<div
 				class="message"
@@ -122,6 +128,9 @@
 					{/if}
 					{#if event.type === 'm.room.encrypted'}
 						<span class="e2e-badge" title="End-to-end encrypted">&#128274;</span>
+					{/if}
+					{#if seqno !== null}
+						<span class="sigchain-badge" title="Sigchain Action #{seqno} — behavioral ledger entry">&#x26D3; #{seqno}</span>
 					{/if}
 					<span class="time">{formatTime(event.origin_server_ts)}</span>
 					<span class="msg-actions">
@@ -206,6 +215,12 @@
 
 	.e2e-badge {
 		font-size: 0.6rem;
+	}
+
+	.sigchain-badge {
+		font-size: 0.6rem;
+		color: var(--text-muted);
+		font-family: monospace;
 	}
 
 	.time {

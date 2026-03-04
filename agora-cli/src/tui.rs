@@ -29,6 +29,7 @@ struct DisplayMessage {
     sender: String,
     body: String,
     event_type: String,
+    sigchain_seqno: Option<u64>,
 }
 
 pub async fn run_tui(client: &mut AgoraClient) -> Result<(), Box<dyn std::error::Error>> {
@@ -118,8 +119,40 @@ pub async fn run_tui(client: &mut AgoraClient) -> Result<(), Box<dyn std::error:
                                         Err(e) => state.status = format!("create error: {e}"),
                                     }
                                 } else {
-                                    match client.send_message(&room_id.clone(), &input).await {
-                                        Ok(_) => {}
+                                    let content_base = serde_json::json!({
+                                        "msgtype": "m.text",
+                                        "body": &input,
+                                    });
+                                    let room_str = room_id.clone();
+                                    let proof = crate::try_publish_action(
+                                        client,
+                                        &room_str,
+                                        "m.room.message",
+                                        &content_base,
+                                        vec![],
+                                    )
+                                    .await;
+                                    let content = if let Some(ref p) = proof {
+                                        let mut c = content_base.clone();
+                                        c.as_object_mut().unwrap().insert(
+                                            "sigchain_proof".into(),
+                                            serde_json::to_value(p)
+                                                .unwrap_or(serde_json::Value::Null),
+                                        );
+                                        c
+                                    } else {
+                                        content_base
+                                    };
+                                    match client
+                                        .send_event(&room_str, "m.room.message", content)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            if let Some(ref p) = proof {
+                                                state.status =
+                                                    format!("sent [sigchain #{}]", p.seqno);
+                                            }
+                                        }
                                         Err(e) => state.status = format!("send error: {e}"),
                                     }
                                 }
@@ -199,6 +232,11 @@ pub async fn run_tui(client: &mut AgoraClient) -> Result<(), Box<dyn std::error:
                     }
                     if Some(room_id) == state.active_room.as_ref() {
                         for event in &room.timeline.events {
+                            let sigchain_seqno = event
+                                .content
+                                .get("sigchain_proof")
+                                .and_then(|p| p.get("seqno"))
+                                .and_then(|v| v.as_u64());
                             state.messages.push(DisplayMessage {
                                 sender: event.sender.localpart().to_owned(),
                                 body: event
@@ -208,6 +246,7 @@ pub async fn run_tui(client: &mut AgoraClient) -> Result<(), Box<dyn std::error:
                                     .unwrap_or(&format!("[{}]", event.event_type))
                                     .to_owned(),
                                 event_type: event.event_type.clone(),
+                                sigchain_seqno,
                             });
                         }
                     }
@@ -238,6 +277,11 @@ async fn select_room(
 
     let resp = client.get_messages(room_id, 50).await?;
     for event in resp.chunk.iter().rev() {
+        let sigchain_seqno = event
+            .content
+            .get("sigchain_proof")
+            .and_then(|p| p.get("seqno"))
+            .and_then(|v| v.as_u64());
         state.messages.push(DisplayMessage {
             sender: event.sender.localpart().to_owned(),
             body: event
@@ -247,6 +291,7 @@ async fn select_room(
                 .unwrap_or(&format!("[{}]", event.event_type))
                 .to_owned(),
             event_type: event.event_type.clone(),
+            sigchain_seqno,
         });
     }
 
@@ -314,9 +359,18 @@ fn draw_ui(f: &mut Frame, state: &mut TuiState) {
             } else {
                 Style::default()
             };
+            let sigchain_span = if let Some(seqno) = m.sigchain_seqno {
+                Span::styled(
+                    format!(" [⛓#{seqno}]"),
+                    Style::default().fg(Color::DarkGray),
+                )
+            } else {
+                Span::raw("")
+            };
             Line::from(vec![
                 Span::styled(format!("<{}> ", m.sender), sender_style),
                 Span::styled(&m.body, body_style),
+                sigchain_span,
             ])
         })
         .collect();
