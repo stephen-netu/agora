@@ -24,7 +24,7 @@ pub fn init_crypto(
     device_id: String,
 ) -> Result<Value, String> {
     let data_dir = crypto_data_dir()?;
-    let machine = CryptoMachine::new(&data_dir, &user_id, &device_id);
+    let machine = CryptoMachine::new(&data_dir, &user_id, &device_id)?;
     let device_keys = machine.device_keys_payload();
     *state.0.lock().unwrap() = Some(machine);
     Ok(device_keys)
