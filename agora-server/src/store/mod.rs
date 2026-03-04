@@ -277,6 +277,13 @@ pub trait Storage: Send + Sync + 'static {
         user_id: &str,
         membership: &str,
     ) -> Result<Vec<String>, StorageError>;
+
+    // -- Sequence timestamp recovery -----------------------------------------
+
+    /// Return the maximum `created_at` / `origin_server_ts` value stored in any
+    /// table. Used on startup to resume `SequenceTimestamp` past the last persisted
+    /// value, preventing token collisions caused by counter reset after a restart.
+    async fn get_max_timestamp(&self) -> Result<u64, StorageError>;
 }
 
 #[derive(Debug, thiserror::Error)]

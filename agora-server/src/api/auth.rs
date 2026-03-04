@@ -40,7 +40,7 @@ pub async fn register(
     let device_id = req.device_id.unwrap_or_else(|| {
         agora_crypto::ids::device_id(user_id.as_str(), ts)
     });
-    let token = agora_crypto::ids::access_token(user_id.as_str(), &device_id, ts);
+    let token = agora_crypto::ids::access_token(&state.token_secret, user_id.as_str(), &device_id, ts);
 
     state
         .store
@@ -120,7 +120,7 @@ pub async fn login(
     let device_id = req.device_id.unwrap_or_else(|| {
         agora_crypto::ids::device_id(&user_id_str, ts)
     });
-    let token = agora_crypto::ids::access_token(&user_id_str, &device_id, ts);
+    let token = agora_crypto::ids::access_token(&state.token_secret, &user_id_str, &device_id, ts);
 
     state
         .store

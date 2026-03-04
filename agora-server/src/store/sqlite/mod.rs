@@ -413,4 +413,32 @@ impl Storage for SqliteStore {
     async fn get_rooms_with_membership(&self, user_id: &str, membership: &str) -> Result<Vec<String>, StorageError> {
         self.get_rooms_with_membership_impl(user_id, membership).await
     }
+
+    async fn get_max_timestamp(&self) -> Result<u64, StorageError> {
+        // Query MAX created_at across all tables that store sequence timestamps.
+        // NULL rows (empty tables) are ignored by SQL MAX; COALESCE handles all-NULL case.
+        let row = sqlx::query(
+            "SELECT COALESCE(MAX(v), 0) AS max_ts FROM (
+                SELECT MAX(created_at)        AS v FROM users
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM access_tokens
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM rooms
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM media
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM device_keys
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM to_device_messages
+                UNION ALL
+                SELECT MAX(origin_server_ts)  AS v FROM events
+            )",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        let max_ts: i64 = row.get("max_ts");
+        Ok(max_ts.max(0) as u64)
+    }
 }

@@ -23,11 +23,12 @@ use std::sync::Arc;
 
 use tracing_subscriber::EnvFilter;
 
-use agora_crypto::SequenceTimestamp;
+use agora_crypto::{SequenceTimestamp, DEFAULT_EPOCH_MS};
 
 use crate::config::Config;
 use crate::state::AppState;
 use crate::store::sqlite::SqliteStore;
+use crate::store::Storage;
 use crate::sync_engine::SyncEngine;
 
 /// Resolve a path relative to the user's data directory if it's not absolute.
@@ -133,6 +134,40 @@ async fn resolve_sqlite_uri(uri: &str, app_name: &str) -> anyhow::Result<String>
     Ok(build_sqlite_uri(uri, &resolved_path))
 }
 
+/// Load a 32-byte server secret from disk, or generate and persist one on first boot.
+///
+/// The secret is stored as a raw 32-byte binary file. It is never transmitted to clients
+/// and must not be deleted between restarts (doing so invalidates all existing sessions).
+async fn load_or_generate_token_secret(data_dir: &std::path::Path) -> anyhow::Result<[u8; 32]> {
+    let secret_path = data_dir.join("token_secret");
+
+    if let Ok(data) = tokio::fs::read(&secret_path).await {
+        if data.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&data);
+            tracing::info!(path = %secret_path.display(), "loaded token secret from disk");
+            return Ok(arr);
+        }
+        tracing::warn!(
+            path = %secret_path.display(),
+            len = data.len(),
+            "token secret file has unexpected length — regenerating"
+        );
+    }
+
+    use argon2::password_hash::rand_core::RngCore;
+    let mut secret = [0u8; 32];
+    argon2::password_hash::rand_core::OsRng.fill_bytes(&mut secret);
+
+    if let Some(parent) = secret_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    tokio::fs::write(&secret_path, &secret).await?;
+    tracing::info!(path = %secret_path.display(), "generated and persisted new token secret");
+
+    Ok(secret)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -162,9 +197,29 @@ async fn main() -> anyhow::Result<()> {
 
     let store = SqliteStore::open(&db_uri).await?;
 
+    // S-02: resume sequence timestamp from last persisted value to prevent unique-constraint
+    // collisions caused by counter reset after a server restart.
+    let max_ts = store.get_max_timestamp().await?;
+    let timestamp = if max_ts > DEFAULT_EPOCH_MS {
+        let last_seq = max_ts - DEFAULT_EPOCH_MS;
+        tracing::info!(max_ts, last_seq, "resuming sequence timestamp from persisted state");
+        SequenceTimestamp::resume_from(DEFAULT_EPOCH_MS, last_seq)
+    } else {
+        tracing::info!("starting sequence timestamp from epoch (fresh database)");
+        SequenceTimestamp::default()
+    };
+
     let media_path = resolve_data_path(&config.media.store_path, "agora")?;
     tokio::fs::create_dir_all(&media_path).await?;
     tracing::info!(path = %media_path.display(), "media store ready");
+
+    // Token secret: load from data dir (or generate on first boot). Invalidating all
+    // active sessions requires deleting the token_secret file and restarting.
+    let data_dir = dirs::data_dir()
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| anyhow::anyhow!("could not determine data directory"))?
+        .join("agora");
+    let token_secret = load_or_generate_token_secret(&data_dir).await?;
 
     let app_state = AppState {
         store: Arc::new(store),
@@ -173,8 +228,8 @@ async fn main() -> anyhow::Result<()> {
         media_path,
         max_upload_bytes: config.media.max_upload_bytes,
         typing: Default::default(),
-        // S-02: deterministic sequence timestamp. Epoch = 2024-03-01 00:00:00 UTC in ms.
-        timestamp: SequenceTimestamp::default().into_arc(),
+        timestamp: timestamp.into_arc(),
+        token_secret,
     };
 
     let cors = tower_http::cors::CorsLayer::new()
