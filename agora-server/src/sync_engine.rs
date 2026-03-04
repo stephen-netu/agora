@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use agora_core::events::RoomEvent;
@@ -13,7 +13,7 @@ const CHANNEL_CAPACITY: usize = 256;
 /// requests wake up immediately.
 pub struct SyncEngine {
     /// Map from room_id -> broadcast sender.
-    rooms: Mutex<HashMap<String, broadcast::Sender<SyncEvent>>>,
+    rooms: Mutex<BTreeMap<String, broadcast::Sender<SyncEvent>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub struct SyncEvent {
 impl SyncEngine {
     pub fn new() -> Self {
         Self {
-            rooms: Mutex::new(HashMap::new()),
+            rooms: Mutex::new(BTreeMap::new()),
         }
     }
 

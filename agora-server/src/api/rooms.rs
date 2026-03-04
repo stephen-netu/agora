@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use axum::extract::{Path, Query, State};
 use axum::Json;
 
@@ -10,11 +12,14 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::store::RoomRecord;
 
-fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+/// Helper: serialize content to bytes for deterministic event ID generation.
+fn content_bytes(value: &serde_json::Value) -> Result<Vec<u8>, ApiError> {
+    serde_json::to_vec(value).map_err(|e| ApiError::bad_json(format!("content serialize: {e}")))
+}
+
+/// Helper: parse EventId from a deterministic ID string.
+fn parse_event_id(s: &str) -> Result<EventId, ApiError> {
+    EventId::parse(s).map_err(|e| ApiError::bad_json(format!("event id parse: {e}")))
 }
 
 /// POST /_matrix/client/v3/createRoom
@@ -23,8 +28,16 @@ pub async fn create_room(
     AuthUser(user_id, _): AuthUser,
     Json(req): Json<CreateRoomRequest>,
 ) -> Result<Json<CreateRoomResponse>, ApiError> {
-    let room_id = RoomId::new(&state.server_name);
-    let now = now_millis();
+    // S-02: deterministic room ID from BLAKE3(creator + name + timestamp + domain)
+    let ts = state.timestamp.next_timestamp()?;
+    let room_id_str = agora_crypto::ids::room_id(
+        user_id.as_str(),
+        req.name.as_deref().unwrap_or(""),
+        ts,
+        &state.server_name,
+    );
+    let room_id = RoomId::parse(&room_id_str)
+        .map_err(|e| ApiError::bad_json(format!("room id parse: {e}")))?;
 
     let room_type = req
         .creation_content
@@ -40,7 +53,7 @@ pub async fn create_room(
             name: req.name.clone(),
             topic: req.topic.clone(),
             creator: user_id.as_str().to_owned(),
-            created_at: now as i64,
+            created_at: ts as i64,
             room_type: room_type.clone(),
         })
         .await?;
@@ -48,7 +61,7 @@ pub async fn create_room(
     // Creator joins automatically.
     state
         .store
-        .set_membership(room_id.as_str(), user_id.as_str(), "join", now as i64)
+        .set_membership(room_id.as_str(), user_id.as_str(), "join", ts as i64)
         .await?;
 
     // Build m.room.create content, merging creation_content if provided.
@@ -61,32 +74,50 @@ pub async fn create_room(
         }
     }
 
+    // S-02: deterministic event ID from BLAKE3(room + sender + type + content + ts)
+    let create_event_ts = state.timestamp.next_timestamp()?;
+    let create_event_id = parse_event_id(&agora_crypto::ids::event_id(
+        room_id.as_str(),
+        user_id.as_str(),
+        event_type::CREATE,
+        &content_bytes(&create_content)?,
+        create_event_ts,
+    ))?;
     let create_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: create_event_id,
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::CREATE.to_owned(),
         state_key: Some(String::new()),
         content: create_content,
-        origin_server_ts: now,
+        origin_server_ts: create_event_ts,
         stream_ordering: None,
     };
     let ordering = state.store.store_event(&create_event).await?;
     state.sync_engine.broadcast(room_id.as_str(), &create_event, ordering);
 
     // Store m.room.member state event for the creator.
+    let member_content = serde_json::to_value(RoomMemberContent {
+        membership: Membership::Join,
+        displayname: Some(user_id.localpart().to_owned()),
+    })
+    .map_err(|e| ApiError::bad_json(format!("member content: {e}")))?;
+    let member_event_ts = state.timestamp.next_timestamp()?;
+    let member_event_id = parse_event_id(&agora_crypto::ids::event_id(
+        room_id.as_str(),
+        user_id.as_str(),
+        event_type::MEMBER,
+        &content_bytes(&member_content)?,
+        member_event_ts,
+    ))?;
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: member_event_id,
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
         state_key: Some(user_id.as_str().to_owned()),
-        content: serde_json::to_value(RoomMemberContent {
-            membership: Membership::Join,
-            displayname: Some(user_id.localpart().to_owned()),
-        })
-        .unwrap(),
-        origin_server_ts: now,
+        content: member_content,
+        origin_server_ts: member_event_ts,
         stream_ordering: None,
     };
     let ordering = state.store.store_event(&member_event).await?;
@@ -94,14 +125,24 @@ pub async fn create_room(
 
     // Optional name state event.
     if let Some(name) = &req.name {
+        let name_content = serde_json::to_value(RoomNameContent { name: name.clone() })
+            .map_err(|e| ApiError::bad_json(format!("name content: {e}")))?;
+        let name_event_ts = state.timestamp.next_timestamp()?;
+        let name_event_id = parse_event_id(&agora_crypto::ids::event_id(
+            room_id.as_str(),
+            user_id.as_str(),
+            event_type::NAME,
+            &content_bytes(&name_content)?,
+            name_event_ts,
+        ))?;
         let name_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: name_event_id,
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::NAME.to_owned(),
             state_key: Some(String::new()),
-            content: serde_json::to_value(RoomNameContent { name: name.clone() }).unwrap(),
-            origin_server_ts: now,
+            content: name_content,
+            origin_server_ts: name_event_ts,
             stream_ordering: None,
         };
         let ordering = state.store.store_event(&name_event).await?;
@@ -110,17 +151,24 @@ pub async fn create_room(
 
     // Optional topic state event.
     if let Some(topic) = &req.topic {
+        let topic_content = serde_json::to_value(RoomTopicContent { topic: topic.clone() })
+            .map_err(|e| ApiError::bad_json(format!("topic content: {e}")))?;
+        let topic_event_ts = state.timestamp.next_timestamp()?;
+        let topic_event_id = parse_event_id(&agora_crypto::ids::event_id(
+            room_id.as_str(),
+            user_id.as_str(),
+            event_type::TOPIC,
+            &content_bytes(&topic_content)?,
+            topic_event_ts,
+        ))?;
         let topic_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: topic_event_id,
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::TOPIC.to_owned(),
             state_key: Some(String::new()),
-            content: serde_json::to_value(RoomTopicContent {
-                topic: topic.clone(),
-            })
-            .unwrap(),
-            origin_server_ts: now,
+            content: topic_content,
+            origin_server_ts: topic_event_ts,
             stream_ordering: None,
         };
         let ordering = state.store.store_event(&topic_event).await?;
@@ -128,21 +176,30 @@ pub async fn create_room(
     }
 
     for invited_user in &req.invite {
-        let invite_ts = now_millis();
+        let invite_ts = state.timestamp.next_timestamp()?;
         state
             .store
             .set_membership(room_id.as_str(), invited_user.as_str(), "invite", invite_ts as i64)
             .await?;
+        let invite_content = serde_json::to_value(RoomMemberContent {
+            membership: Membership::Invite,
+            displayname: None,
+        })
+        .map_err(|e| ApiError::bad_json(format!("invite content: {e}")))?;
+        let invite_event_id = parse_event_id(&agora_crypto::ids::event_id(
+            room_id.as_str(),
+            user_id.as_str(),
+            event_type::MEMBER,
+            &content_bytes(&invite_content)?,
+            invite_ts,
+        ))?;
         let invite_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: invite_event_id,
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::MEMBER.to_owned(),
             state_key: Some(invited_user.as_str().to_owned()),
-            content: serde_json::to_value(RoomMemberContent {
-                membership: Membership::Invite,
-                displayname: None,
-            }).unwrap(),
+            content: invite_content,
             origin_server_ts: invite_ts,
             stream_ordering: None,
         };
@@ -193,7 +250,8 @@ pub async fn join_room(
         .await?
         .ok_or_else(|| ApiError::not_found("room not found"))?;
 
-    let now = now_millis();
+    // S-02: deterministic timestamp
+    let now = state.timestamp.next_timestamp()?;
 
     state
         .store
@@ -203,17 +261,25 @@ pub async fn join_room(
     let room_id = RoomId::parse(&room_id_str)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
+    let member_content = serde_json::to_value(RoomMemberContent {
+        membership: Membership::Join,
+        displayname: Some(user_id.localpart().to_owned()),
+    })
+    .map_err(|e| ApiError::bad_json(format!("member content: {e}")))?;
+    let member_event_id = parse_event_id(&agora_crypto::ids::event_id(
+        room_id.as_str(),
+        user_id.as_str(),
+        event_type::MEMBER,
+        &content_bytes(&member_content)?,
+        now,
+    ))?;
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: member_event_id,
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
         state_key: Some(user_id.as_str().to_owned()),
-        content: serde_json::to_value(RoomMemberContent {
-            membership: Membership::Join,
-            displayname: Some(user_id.localpart().to_owned()),
-        })
-        .unwrap(),
+        content: member_content,
         origin_server_ts: now,
         stream_ordering: None,
     };
@@ -246,25 +312,37 @@ pub async fn invite_to_room(
         return Err(ApiError::forbidden("you are not a member of this room"));
     }
 
-    let target_user = body.get("user_id").and_then(|v| v.as_str())
+    let target_user = body
+        .get("user_id")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::bad_json("missing user_id"))?;
 
-    let now = now_millis();
+    // S-02: deterministic timestamp
+    let now = state.timestamp.next_timestamp()?;
     state.store.set_membership(&room_id, target_user, "invite", now as i64).await?;
 
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
+    let invite_content = serde_json::to_value(RoomMemberContent {
+        membership: Membership::Invite,
+        displayname: None,
+    })
+    .map_err(|e| ApiError::bad_json(format!("invite content: {e}")))?;
+    let invite_event_id = parse_event_id(&agora_crypto::ids::event_id(
+        rid.as_str(),
+        user_id.as_str(),
+        event_type::MEMBER,
+        &content_bytes(&invite_content)?,
+        now,
+    ))?;
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: invite_event_id,
         room_id: rid,
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
         state_key: Some(target_user.to_owned()),
-        content: serde_json::to_value(RoomMemberContent {
-            membership: Membership::Invite,
-            displayname: None,
-        }).unwrap(),
+        content: invite_content,
         origin_server_ts: now,
         stream_ordering: None,
     };
@@ -296,10 +374,13 @@ pub async fn get_joined_members(
             } else {
                 None
             };
-            joined.insert(m.user_id, serde_json::json!({
-                "display_name": display_name,
-                "avatar_url": avatar_url,
-            }));
+            joined.insert(
+                m.user_id,
+                serde_json::json!({
+                    "display_name": display_name,
+                    "avatar_url": avatar_url,
+                }),
+            );
         }
     }
     Ok(Json(serde_json::json!({ "joined": joined })))
@@ -310,7 +391,7 @@ pub async fn get_members(
     State(state): State<AppState>,
     AuthUser(user_id, _): AuthUser,
     Path(room_id): Path<String>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
+    Query(query): Query<BTreeMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let membership = state.store.get_membership(&room_id, user_id.as_str()).await?;
     if membership.as_deref() != Some("join") {
@@ -346,7 +427,8 @@ pub async fn leave_room(
         .await?
         .ok_or_else(|| ApiError::not_found("room not found"))?;
 
-    let now = now_millis();
+    // S-02: deterministic timestamp
+    let now = state.timestamp.next_timestamp()?;
 
     state
         .store
@@ -356,17 +438,25 @@ pub async fn leave_room(
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
+    let leave_content = serde_json::to_value(RoomMemberContent {
+        membership: Membership::Leave,
+        displayname: None,
+    })
+    .map_err(|e| ApiError::bad_json(format!("leave content: {e}")))?;
+    let leave_event_id = parse_event_id(&agora_crypto::ids::event_id(
+        rid.as_str(),
+        user_id.as_str(),
+        event_type::MEMBER,
+        &content_bytes(&leave_content)?,
+        now,
+    ))?;
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: leave_event_id,
         room_id: rid,
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
         state_key: Some(user_id.as_str().to_owned()),
-        content: serde_json::to_value(RoomMemberContent {
-            membership: Membership::Leave,
-            displayname: None,
-        })
-        .unwrap(),
+        content: leave_content,
         origin_server_ts: now,
         stream_ordering: None,
     };

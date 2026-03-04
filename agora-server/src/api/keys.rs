@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use axum::extract::State;
 use axum::Json;
@@ -9,13 +9,6 @@ use crate::api::AuthUser;
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::store::{DeviceKeysRecord, OneTimeKeyRecord};
-
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
 
 /// POST /_matrix/client/v3/keys/upload
 pub async fn upload_keys(
@@ -36,6 +29,8 @@ pub async fn upload_keys(
                 "device_keys user_id/device_id mismatch",
             ));
         }
+        // S-02: deterministic timestamp instead of SystemTime::now()
+        let ts = state.timestamp.next_timestamp()?;
         let record = DeviceKeysRecord {
             user_id: dk.user_id.clone(),
             device_id: dk.device_id.clone(),
@@ -45,7 +40,7 @@ pub async fn upload_keys(
                 .map_err(|e| ApiError::bad_json(e.to_string()))?,
             signatures_json: serde_json::to_string(&dk.signatures)
                 .map_err(|e| ApiError::bad_json(e.to_string()))?,
-            created_at: now_millis(),
+            created_at: ts as i64,
         };
         state.store.upsert_device_keys(&record).await?;
     }
@@ -95,13 +90,13 @@ pub async fn query_keys(
 
     let records = state.store.get_device_keys_for_users(&pairs).await?;
 
-    let mut result: HashMap<String, HashMap<String, DeviceKeysPayload>> = HashMap::new();
+    let mut result: BTreeMap<String, BTreeMap<String, DeviceKeysPayload>> = BTreeMap::new();
     for r in records {
         let algorithms: Vec<String> =
             serde_json::from_str(&r.algorithms_json).unwrap_or_default();
-        let keys: HashMap<String, String> =
+        let keys: BTreeMap<String, String> =
             serde_json::from_str(&r.keys_json).unwrap_or_default();
-        let signatures: HashMap<String, HashMap<String, String>> =
+        let signatures: BTreeMap<String, BTreeMap<String, String>> =
             serde_json::from_str(&r.signatures_json).unwrap_or_default();
 
         let payload = DeviceKeysPayload {
@@ -128,7 +123,7 @@ pub async fn claim_keys(
     AuthUser(_user_id, _): AuthUser,
     Json(body): Json<KeysClaimRequest>,
 ) -> Result<Json<KeysClaimResponse>, ApiError> {
-    let mut result: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+    let mut result: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
 
     for (uid, devices) in &body.one_time_keys {
         for (did, algorithm) in devices {

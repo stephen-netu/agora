@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use axum::extract::{Query, State};
 use axum::Json;
@@ -38,7 +38,7 @@ pub async fn sync(
         .unwrap_or_default();
 
     // First pass: check for events already in the database.
-    let mut join_map = HashMap::new();
+    let mut join_map = BTreeMap::new();
     let mut max_ordering = since;
 
     for room_id in &joined_rooms {
@@ -106,7 +106,7 @@ pub async fn sync(
             rooms: SyncRooms {
                 join: join_map,
                 invite: invite_map,
-                leave: HashMap::new(),
+                leave: BTreeMap::new(),
             },
             to_device: Some(to_device),
             device_one_time_keys_count: Some(otk_counts),
@@ -162,7 +162,7 @@ pub async fn sync(
                 rooms: SyncRooms {
                     join: join_map,
                     invite: invite_map,
-                    leave: HashMap::new(),
+                    leave: BTreeMap::new(),
                 },
                 to_device: Some(to_device),
                 device_one_time_keys_count: Some(otk_counts),
@@ -186,9 +186,9 @@ pub async fn sync(
     Ok(Json(SyncResponse {
         next_batch: current_max.to_string(),
         rooms: SyncRooms {
-            join: HashMap::new(),
+            join: BTreeMap::new(),
             invite: invite_map,
-            leave: HashMap::new(),
+            leave: BTreeMap::new(),
         },
         to_device: Some(to_device),
         device_one_time_keys_count: Some(otk_counts),
@@ -198,12 +198,12 @@ pub async fn sync(
 async fn collect_invites(
     state: &AppState,
     user_id: &str,
-) -> Result<HashMap<String, InvitedRoom>, ApiError> {
+) -> Result<BTreeMap<String, InvitedRoom>, ApiError> {
     let invited_rooms = state
         .store
         .get_rooms_with_membership(user_id, "invite")
         .await?;
-    let mut invite_map = HashMap::new();
+    let mut invite_map = BTreeMap::new();
     for room_id in invited_rooms {
         let state_events = state.store.get_state_events(&room_id).await?;
         let stripped: Vec<_> = state_events
@@ -227,7 +227,7 @@ async fn collect_invites(
 
 async fn add_ephemeral_typing(
     state: &AppState,
-    join_map: &mut HashMap<String, JoinedRoom>,
+    join_map: &mut BTreeMap<String, JoinedRoom>,
 ) {
     for (room_id, joined) in join_map.iter_mut() {
         let typing_users = crate::api::typing::get_typing_users(state, room_id).await;
@@ -246,7 +246,7 @@ async fn collect_to_device(
     state: &AppState,
     user_id: &str,
     device_id: &str,
-) -> Result<(ToDevicePayload, HashMap<String, u64>), ApiError> {
+) -> Result<(ToDevicePayload, BTreeMap<String, u64>), ApiError> {
     let messages = state.store.get_to_device_messages(user_id, device_id).await?;
     let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
 

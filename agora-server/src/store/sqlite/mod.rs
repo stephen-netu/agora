@@ -176,7 +176,8 @@ fn row_to_event(r: &sqlx::sqlite::SqliteRow) -> RoomEvent {
     let ordering: i64 = r.get("stream_ordering");
 
     RoomEvent {
-        event_id: EventId::parse(&event_id_str).unwrap_or_else(|_| EventId::new()),
+        event_id: EventId::parse(&event_id_str)
+            .unwrap_or_else(|_| EventId::parse("$db-corrupt-event-id").unwrap()),
         room_id: agora_core::identifiers::RoomId::parse(&room_id_str)
             .unwrap_or_else(|_| agora_core::identifiers::RoomId::parse("!unknown:localhost").unwrap()),
         sender: agora_core::identifiers::UserId::parse(&sender_str)
@@ -337,7 +338,7 @@ impl Storage for SqliteStore {
         &self,
         user_id: &str,
         device_id: &str,
-    ) -> Result<std::collections::HashMap<String, u64>, StorageError> {
+    ) -> Result<std::collections::BTreeMap<String, u64>, StorageError> {
         self.count_one_time_keys_impl(user_id, device_id).await
     }
 

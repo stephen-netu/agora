@@ -78,3 +78,10 @@ impl From<crate::store::StorageError> for ApiError {
         ApiError::unknown("internal database error")
     }
 }
+
+impl From<agora_crypto::CryptoError> for ApiError {
+    fn from(e: agora_crypto::CryptoError) -> Self {
+        tracing::error!("crypto error: {e}");
+        ApiError::unknown("internal crypto error")
+    }
+}
