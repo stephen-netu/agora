@@ -284,6 +284,39 @@ pub trait Storage: Send + Sync + 'static {
     /// table. Used on startup to resume `SequenceTimestamp` past the last persisted
     /// value, preventing token collisions caused by counter reset after a restart.
     async fn get_max_timestamp(&self) -> Result<u64, StorageError>;
+
+    // -- Sigchain ------------------------------------------------------------
+
+    /// Persist a verified sigchain link. Returns `StorageError::Conflict` if
+    /// `(agent_id, seqno)` already exists.
+    async fn store_sigchain_link(&self, record: &SigchainLinkRecord) -> Result<(), StorageError>;
+
+    /// Return all links for an agent ordered by seqno ascending.
+    async fn get_sigchain(&self, agent_id: &[u8; 32]) -> Result<Vec<SigchainLinkRecord>, StorageError>;
+
+    /// Return links for an agent with `seqno > since_seqno`, ordered ascending.
+    async fn get_sigchain_since(
+        &self,
+        agent_id: &[u8; 32],
+        since_seqno: u64,
+    ) -> Result<Vec<SigchainLinkRecord>, StorageError>;
+}
+
+/// One row of the `sigchain_links` table.
+#[derive(Debug, Clone)]
+pub struct SigchainLinkRecord {
+    /// Raw 32-byte `AgentId`.
+    pub agent_id: [u8; 32],
+    /// 0-based monotonic sequence number.
+    pub seqno: u64,
+    /// JSON-serialized `SigchainLink`.
+    pub link_json: String,
+    /// 32-byte BLAKE3 canonical hash.
+    pub canonical_hash: [u8; 32],
+    /// Variant name: "Genesis", "Action", "Checkpoint", etc.
+    pub link_type: String,
+    /// `SequenceTimestamp` u64 (S-02 — no `SystemTime`).
+    pub created_at: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -292,4 +325,6 @@ pub enum StorageError {
     Database(String),
     #[error("not found")]
     NotFound,
+    #[error("conflict: {0}")]
+    Conflict(String),
 }

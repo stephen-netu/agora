@@ -6,6 +6,7 @@ pub mod keys;
 pub mod media;
 pub mod profile;
 pub mod rooms;
+pub mod sigchain;
 pub mod spaces;
 pub mod sync;
 pub mod to_device;
@@ -162,6 +163,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v3/config", get(media::config));
 
+    let agora_sigchain = Router::new()
+        .route("/{agent_id}", put(sigchain::publish_link).get(sigchain::get_chain))
+        .route("/{agent_id}/verify", get(sigchain::verify_chain));
+
     Router::new()
         .route("/_matrix/client/versions", get(versions))
         .route(
@@ -170,6 +175,7 @@ pub fn router(state: AppState) -> Router {
         )
         .nest("/_matrix/client", matrix)
         .nest("/_matrix/media", media)
+        .nest("/_agora/sigchain", agora_sigchain)
         .with_state(state)
 }
 

@@ -7,14 +7,16 @@ use agora_core::identifiers::EventId;
 
 use super::{
     AccessTokenRecord, DeviceKeysRecord, MediaRecord, OneTimeKeyRecord,
-    RoomMemberRecord, RoomRecord, Storage, StorageError, ToDeviceRecord, UserRecord,
+    RoomMemberRecord, RoomRecord, SigchainLinkRecord, Storage, StorageError, ToDeviceRecord,
+    UserRecord,
 };
 
-mod users;
-mod rooms;
-mod events;
 mod e2ee;
+mod events;
 mod media;
+mod rooms;
+mod sigchain;
+mod users;
 
 pub struct SqliteStore {
     pool: SqlitePool,
@@ -139,6 +141,20 @@ impl SqliteStore {
                 alias TEXT PRIMARY KEY,
                 room_id TEXT NOT NULL
             )",
+            // Phase 2: sigchain behavioral ledger.
+            "CREATE TABLE IF NOT EXISTS sigchain_links (
+                agent_id     BLOB    NOT NULL,
+                seqno        INTEGER NOT NULL,
+                link_json    TEXT    NOT NULL,
+                canonical_hash BLOB  NOT NULL,
+                link_type    TEXT    NOT NULL,
+                created_at   INTEGER NOT NULL,
+                PRIMARY KEY (agent_id, seqno)
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_sigchain_agent
+                ON sigchain_links(agent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_sigchain_type
+                ON sigchain_links(agent_id, link_type)",
         ];
 
         let alter_statements = [
@@ -412,6 +428,22 @@ impl Storage for SqliteStore {
 
     async fn get_rooms_with_membership(&self, user_id: &str, membership: &str) -> Result<Vec<String>, StorageError> {
         self.get_rooms_with_membership_impl(user_id, membership).await
+    }
+
+    async fn store_sigchain_link(&self, record: &SigchainLinkRecord) -> Result<(), StorageError> {
+        self.store_sigchain_link_impl(record).await
+    }
+
+    async fn get_sigchain(&self, agent_id: &[u8; 32]) -> Result<Vec<SigchainLinkRecord>, StorageError> {
+        self.get_sigchain_impl(agent_id).await
+    }
+
+    async fn get_sigchain_since(
+        &self,
+        agent_id: &[u8; 32],
+        since_seqno: u64,
+    ) -> Result<Vec<SigchainLinkRecord>, StorageError> {
+        self.get_sigchain_since_impl(agent_id, since_seqno).await
     }
 
     async fn get_max_timestamp(&self) -> Result<u64, StorageError> {
