@@ -34,6 +34,11 @@ pub fn run() {
             crypto::commands::mark_keys_shared,
             crypto::commands::process_sync_crypto,
             crypto::commands::get_identity_keys,
+            crypto::commands::init_sigchain,
+            crypto::commands::get_agent_id,
+            crypto::commands::append_sigchain_action,
+            crypto::commands::check_sigchain_loop,
+            crypto::commands::append_sigchain_refusal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

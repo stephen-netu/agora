@@ -4,7 +4,7 @@
 	import { themes, type ThemeId } from '$lib/themes';
 	import { auth } from '$lib/stores/auth';
 	import { api } from '$lib/api';
-	import { getIdentityKeys } from '$lib/crypto';
+	import { getIdentityKeys, getAgentId } from '$lib/crypto';
 
 	interface Props {
 		onClose: () => void;
@@ -18,14 +18,18 @@
 	let activeTab: 'appearance' | 'encryption' | 'connection' = $state('appearance');
 	let deviceId = $state('');
 	let fingerprint = $state('');
+	let agentId = $state('');
 	let homeserverUrl = $state(api.getBaseUrl());
 
 	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; });
 
 	onMount(async () => {
-		const keys = await getIdentityKeys();
+		const [keys, aid] = await Promise.all([getIdentityKeys(), getAgentId()]);
 		if (keys) {
 			fingerprint = keys.ed25519;
+		}
+		if (aid) {
+			agentId = aid;
 		}
 	});
 </script>
@@ -68,6 +72,11 @@
 						<span class="setting-label">Device Fingerprint (Ed25519)</span>
 						<code class="mono-value fingerprint">{fingerprint || 'Initializing...'}</code>
 						<p class="setting-hint">Share this with others to verify your device.</p>
+					</div>
+					<div class="setting-group">
+						<span class="setting-label">Agent ID (Sigchain Identity)</span>
+						<code class="mono-value fingerprint">{agentId || 'Initializing...'}</code>
+						<p class="setting-hint">Unique cryptographic identity for your behavioral ledger. Others can verify your actions via the sigchain API.</p>
 					</div>
 				{:else if activeTab === 'appearance'}
 					<div class="setting-group">

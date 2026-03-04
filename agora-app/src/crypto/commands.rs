@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use serde_json::Value;
 use tauri::State;
 
+use agora_crypto::AgentId;
+
 use super::machine::{CryptoMachine, DecryptedPayload, DeviceInfo, EncryptedPayload};
 
 pub struct CryptoState(pub Mutex<Option<CryptoMachine>>);
@@ -152,4 +154,109 @@ pub fn get_identity_keys(state: State<CryptoState>) -> Result<(String, String), 
     let guard = state.0.lock().unwrap();
     let machine = guard.as_ref().ok_or("crypto not initialized")?;
     Ok(machine.identity_keys())
+}
+
+// ── Sigchain commands ─────────────────────────────────────────────────────────
+
+/// Initialise (or restore) the agent sigchain identity.
+/// Safe to call on every startup — no-op if already initialised.
+#[tauri::command]
+pub fn init_sigchain(state: State<CryptoState>) -> Result<(), String> {
+    let mut guard = state.0.lock().unwrap();
+    let machine = guard.as_mut().ok_or("crypto not initialized")?;
+    machine.init_sigchain()
+}
+
+/// Return the hex-encoded `AgentId` (64 hex chars) for this device's sigchain.
+/// Returns `null` JSON if the sigchain is not yet initialised.
+#[tauri::command]
+pub fn get_agent_id(state: State<CryptoState>) -> Result<Option<String>, String> {
+    let guard = state.0.lock().unwrap();
+    let machine = guard.as_ref().ok_or("crypto not initialized")?;
+    Ok(machine.agent_id_hex())
+}
+
+/// Return whether `correlation_path` (hex AgentIds) contains this agent's id.
+///
+/// Callers MUST check this before `append_sigchain_action`. If `true`, call
+/// `append_sigchain_refusal` instead and surface an error to the UI.
+#[tauri::command]
+pub fn check_sigchain_loop(
+    state: State<CryptoState>,
+    correlation_path: Vec<String>,
+) -> Result<bool, String> {
+    let path: Result<Vec<AgentId>, String> = correlation_path
+        .iter()
+        .map(|hex| AgentId::from_hex(hex).map_err(|e| format!("invalid AgentId hex: {e}")))
+        .collect();
+    let path = path?;
+
+    let guard = state.0.lock().unwrap();
+    let machine = guard.as_ref().ok_or("crypto not initialized")?;
+    Ok(machine.has_loop_in_path(&path))
+}
+
+/// Append a `Refusal` link when a loop is detected in the correlation path.
+///
+/// Records the refusal on-chain (auditable). Returns the link JSON for
+/// optional publication to the server.
+#[tauri::command]
+pub fn append_sigchain_refusal(
+    state: State<CryptoState>,
+    refused_event_type: String,
+    correlation_path: Vec<String>,
+) -> Result<Value, String> {
+    let path: Result<Vec<AgentId>, String> = correlation_path
+        .iter()
+        .map(|hex| AgentId::from_hex(hex).map_err(|e| format!("invalid AgentId hex: {e}")))
+        .collect();
+    let path = path?;
+
+    let mut guard = state.0.lock().unwrap();
+    let machine = guard.as_mut().ok_or("crypto not initialized")?;
+
+    let link = machine.append_refusal_link(&refused_event_type, path)?;
+    serde_json::to_value(&link).map_err(|e| format!("serialize link: {e}"))
+}
+
+/// Proof returned by `append_sigchain_action` — the minimum data the frontend
+/// needs to include a `sigchain_proof` field in the outgoing event content.
+#[derive(serde::Serialize)]
+pub struct SigchainActionProof {
+    /// Sequence number of the new Action link.
+    pub seqno: u64,
+    /// Hex-encoded `AgentId` of the signing agent.
+    pub agent_id: String,
+}
+
+/// Append an `Action` link to the local sigchain for an outgoing Matrix event.
+///
+/// - `event_type`: Matrix event type string (e.g. `"m.room.message"`).
+/// - `room_id`:    Matrix room ID — will be BLAKE3-hashed before storage.
+/// - `content`:    Event content JSON — will be BLAKE3-hashed before storage.
+/// - `correlation_path`: upstream agent hex IDs (max 16, empty for top-level).
+///
+/// Returns `{ seqno, agent_id }` — include this as `sigchain_proof` in the
+/// outgoing event content so verifiers can cross-reference the link.
+#[tauri::command]
+pub fn append_sigchain_action(
+    state: State<CryptoState>,
+    event_type: String,
+    room_id: String,
+    content: Value,
+    correlation_path: Vec<String>,
+) -> Result<SigchainActionProof, String> {
+    // Decode hex-encoded AgentIds.
+    let path: Result<Vec<AgentId>, String> = correlation_path
+        .iter()
+        .map(|hex| AgentId::from_hex(hex).map_err(|e| format!("invalid AgentId hex: {e}")))
+        .collect();
+    let path = path?;
+
+    let mut guard = state.0.lock().unwrap();
+    let machine = guard.as_mut().ok_or("crypto not initialized")?;
+
+    let link = machine.append_action_link(&event_type, &room_id, &content, path)?;
+    let agent_id = machine.agent_id_hex().ok_or("sigchain not initialized")?;
+    Ok(SigchainActionProof { seqno: link.seqno, agent_id })
 }

@@ -23,6 +23,13 @@ pub struct CryptoStoreData {
     /// Keyed by session composite key -> list of (message_index, event_id).
     #[serde(default)]
     pub seen_indices: BTreeMap<String, Vec<(u32, String)>>,
+    /// 32-byte agent identity seed, stored as hex. Used to derive `AgentIdentity`
+    /// and sigchain signer. `None` until `init_sigchain()` is called.
+    #[serde(default)]
+    pub identity_seed_hex: Option<String>,
+    /// Full sigchain serialized as JSON. `None` until `init_sigchain()` is called.
+    #[serde(default)]
+    pub sigchain_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -23,7 +23,10 @@ name = "agora-app"
 version = "0.1.0"
 dependencies = [
  "agora-crypto",
+ "blake3",
  "dirs-next",
+ "hex",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "tauri",
@@ -38,10 +41,13 @@ name = "agora-cli"
 version = "0.1.0"
 dependencies = [
  "agora-core",
+ "agora-crypto",
+ "blake3",
  "clap",
  "crossterm",
  "dirs 6.0.0",
  "mime_guess",
+ "rand_core 0.6.4",
  "ratatui",
  "reqwest 0.12.28",
  "serde",

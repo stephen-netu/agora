@@ -12,6 +12,7 @@
 )]
 
 mod client;
+mod sigchain;
 mod tui;
 
 use clap::{Parser, Subcommand};
@@ -85,6 +86,8 @@ enum Commands {
     },
     /// Launch interactive TUI
     Connect,
+    /// Show this device's sigchain Agent ID
+    AgentId,
 }
 
 #[derive(Subcommand)]
@@ -324,8 +327,43 @@ async fn run(
 
         Commands::Send { room, message } => {
             let body = message.join(" ");
-            let resp = client.send_message(&room, &body).await?;
-            println!("sent: {}", resp.event_id);
+
+            // Attempt to attach a sigchain Action link to the message.
+            // Failure is non-fatal: the message is sent regardless, with a
+            // warning emitted to stderr.
+            let content_base = serde_json::json!({
+                "msgtype": "m.text",
+                "body": body,
+            });
+
+            // correlation_path is empty for top-level user messages (S-05).
+            let sigchain_proof = try_publish_action(
+                client,
+                &room,
+                "m.room.message",
+                &content_base,
+                vec![],
+            )
+            .await;
+
+            // Include the sigchain_proof in the event content if available.
+            let content = if let Some(ref proof) = sigchain_proof {
+                let mut c = content_base.clone();
+                c.as_object_mut().unwrap().insert(
+                    "sigchain_proof".into(),
+                    serde_json::to_value(proof).unwrap_or(serde_json::Value::Null),
+                );
+                c
+            } else {
+                content_base
+            };
+
+            let resp = client.send_event(&room, "m.room.message", content).await?;
+            if let Some(ref proof) = sigchain_proof {
+                println!("sent: {} [sigchain seqno={}]", resp.event_id, proof.seqno);
+            } else {
+                println!("sent: {}", resp.event_id);
+            }
         }
 
         Commands::Messages { room, limit } => {
@@ -367,7 +405,86 @@ async fn run(
         Commands::Connect => {
             tui::run_tui(client).await?;
         }
+
+        Commands::AgentId => {
+            let config_dir = dirs::config_dir()
+                .ok_or("cannot locate config dir")?
+                .join("agora");
+            let manager = sigchain::SigchainManager::open(&config_dir)
+                .map_err(|e| format!("sigchain: {e}"))?;
+            println!("{}", manager.agent_id_hex());
+        }
     }
 
     Ok(())
+}
+
+// ── Sigchain helpers ──────────────────────────────────────────────────────────
+
+/// Metadata included in the event content to link it to a sigchain Action link.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SigchainProof {
+    /// Sequence number of the corresponding Action sigchain link.
+    pub seqno: u64,
+    /// Full hex-encoded `AgentId` of the signing agent.
+    pub agent_id: String,
+}
+
+/// Attempt to append and publish a sigchain `Action` link for an outgoing event.
+///
+/// `correlation_path` is the caller-supplied ancestry chain (empty for top-level
+/// user actions). If this agent's `AgentId` appears in the path, a `Refusal`
+/// link is appended and published instead, and `None` is returned with a
+/// warning. This enforces the S-05 loop-detection protocol.
+///
+/// Returns `Some(SigchainProof)` on success, `None` on any error.
+pub(crate) async fn try_publish_action(
+    client: &AgoraClient,
+    room_id: &str,
+    event_type: &str,
+    content: &serde_json::Value,
+    correlation_path: Vec<agora_crypto::AgentId>,
+) -> Option<SigchainProof> {
+    let config_dir = dirs::config_dir()?.join("agora");
+
+    let mut manager = sigchain::SigchainManager::open(&config_dir)
+        .map_err(|e| eprintln!("sigchain: open failed: {e}"))
+        .ok()?;
+
+    let agent_id_hex = manager.agent_id_hex();
+
+    // S-05 loop detection: refuse if our AgentId is already in the path.
+    if manager.has_loop(&correlation_path) {
+        eprintln!(
+            "sigchain: loop detected in correlation_path — appending Refusal for {event_type}"
+        );
+        let refusal = manager
+            .append_refusal(event_type, correlation_path)
+            .map_err(|e| eprintln!("sigchain: append_refusal failed: {e}"))
+            .ok()?;
+
+        // Best-effort publish — chain integrity is local; server is non-fatal.
+        let _ = client.publish_sigchain_link(&agent_id_hex, &refusal).await;
+        let _ = manager.save();
+        return None;
+    }
+
+    let link = manager
+        .append_action(event_type, room_id, content, correlation_path)
+        .map_err(|e| eprintln!("sigchain: append_action failed: {e}"))
+        .ok()?;
+
+    let (seqno, _hash) = client
+        .publish_sigchain_link(&agent_id_hex, &link)
+        .await
+        .map_err(|e| eprintln!("sigchain: publish failed (chain still updated locally): {e}"))
+        .ok()?;
+
+    // Persist even on publish failure — chain stays consistent locally.
+    manager
+        .save()
+        .map_err(|e| eprintln!("sigchain: save failed: {e}"))
+        .ok()?;
+
+    Some(SigchainProof { seqno, agent_id: agent_id_hex })
 }

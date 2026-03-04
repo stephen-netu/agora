@@ -430,6 +430,37 @@ impl AgoraClient {
 
         Ok(())
     }
+
+    // -- Sigchain ------------------------------------------------------------
+
+    fn agora_url(&self, path: &str) -> String {
+        format!("{}/_agora{}", self.base_url, path)
+    }
+
+    /// Publish a sigchain link to the server.
+    ///
+    /// Returns `(seqno, canonical_hash_hex)` on success. Errors are non-fatal
+    /// in the send flow — callers should log and proceed rather than aborting.
+    pub async fn publish_sigchain_link(
+        &self,
+        agent_id_hex: &str,
+        link: &agora_crypto::SigchainLink,
+    ) -> Result<(u64, String), CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .put(self.agora_url(&format!("/sigchain/{agent_id_hex}")))
+            .header("Authorization", auth)
+            .json(link)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        let result: serde_json::Value = Self::parse_response(resp).await?;
+        let seqno = result["seqno"].as_u64().unwrap_or(0);
+        let hash = result["canonical_hash"].as_str().unwrap_or("").to_owned();
+        Ok((seqno, hash))
+    }
 }
 
 fn urlencoding(s: &str) -> String {

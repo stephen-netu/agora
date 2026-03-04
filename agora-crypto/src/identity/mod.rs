@@ -210,6 +210,23 @@ pub enum SigchainBody {
         /// Seqno of the link that triggered this transition, if any.
         triggered_by_seqno: Option<u64>,
     },
+
+    /// Proves this agent detected and refused a call-loop.
+    ///
+    /// Appended instead of `Action` when the incoming `correlation_path`
+    /// already contains this agent's `AgentId`. The link is signed and
+    /// hash-linked, making loop detection auditable and non-repudiable.
+    Refusal {
+        /// Matrix event type that was refused.
+        refused_event_type: String,
+        /// Why the agent refused. **Maximum 256 bytes**.
+        reason: String,
+        /// Snapshot of the `correlation_path` that triggered the refusal.
+        /// **Maximum 16 entries** (S-05).
+        correlation_path_snapshot: Vec<AgentId>,
+        /// S-02 sequence timestamp (chain length before append).
+        timestamp: u64,
+    },
 }
 
 impl SigchainBody {
@@ -223,6 +240,7 @@ impl SigchainBody {
             SigchainBody::Action { .. } => "Action",
             SigchainBody::Checkpoint { .. } => "Checkpoint",
             SigchainBody::TrustTransition { .. } => "TrustTransition",
+            SigchainBody::Refusal { .. } => "Refusal",
         }
     }
 
@@ -460,6 +478,18 @@ impl Sigchain {
                         )));
                     }
                 }
+                SigchainBody::Refusal { reason, correlation_path_snapshot, .. } => {
+                    if reason.len() > 256 {
+                        return Err(CryptoError::SigchainVerification(format!(
+                            "link {idx}: Refusal reason exceeds 256 bytes"
+                        )));
+                    }
+                    if correlation_path_snapshot.len() > 16 {
+                        return Err(CryptoError::SigchainVerification(format!(
+                            "link {idx}: Refusal correlation_path_snapshot exceeds 16-hop limit (S-05)"
+                        )));
+                    }
+                }
                 _ => {}
             }
 
@@ -557,6 +587,17 @@ impl Sigchain {
         }
 
         level[0]
+    }
+
+    /// Return `true` if `agent_id` already appears in `path`.
+    ///
+    /// Used to detect call-loops before appending an `Action` link. An agent
+    /// MUST call this before accepting an incoming tool-call; if `true`, it
+    /// should append a `Refusal` link and return an error to the caller.
+    ///
+    /// O(n) where n = path length. Bounded by the 16-hop limit (S-05).
+    pub fn has_loop(agent_id: &AgentId, path: &[AgentId]) -> bool {
+        path.iter().any(|id| id == agent_id)
     }
 
     /// Return the number of links in the chain.
@@ -1054,5 +1095,120 @@ mod tests {
         let chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
         assert!(!chain.is_empty());
         assert_eq!(chain.len(), 1);
+    }
+
+    // ── Refusal / loop-detection tests ───────────────────────────────────────
+
+    #[test]
+    fn test_has_loop_empty_path() {
+        let identity = make_identity(0xE0);
+        assert!(!Sigchain::has_loop(&identity.agent_id, &[]));
+    }
+
+    #[test]
+    fn test_has_loop_not_present() {
+        let identity = make_identity(0xE1);
+        let other = make_identity(0xE2);
+        assert!(!Sigchain::has_loop(&identity.agent_id, &[other.agent_id.clone()]));
+    }
+
+    #[test]
+    fn test_has_loop_self_in_path() {
+        let identity = make_identity(0xE3);
+        let other = make_identity(0xE4);
+        let path = vec![other.agent_id.clone(), identity.agent_id.clone()];
+        assert!(Sigchain::has_loop(&identity.agent_id, &path));
+    }
+
+    #[test]
+    fn test_append_refusal_link() {
+        let identity = make_identity(0xE5);
+        let caller = make_identity(0xE6);
+        let mut chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
+
+        let path = vec![caller.agent_id.clone(), identity.agent_id.clone()];
+        assert!(Sigchain::has_loop(&identity.agent_id, &path));
+
+        chain
+            .append(
+                SigchainBody::Refusal {
+                    refused_event_type: "agora.tool_call".to_owned(),
+                    reason: "loop detected: agent_id appears in correlation_path".to_owned(),
+                    correlation_path_snapshot: path.clone(),
+                    timestamp: chain.len() as u64,
+                },
+                &identity,
+            )
+            .expect("append refusal failed");
+
+        assert_eq!(chain.len(), 2);
+        chain.verify_chain().expect("chain with refusal failed verification");
+
+        match &chain.links[1].body {
+            SigchainBody::Refusal {
+                refused_event_type,
+                correlation_path_snapshot,
+                ..
+            } => {
+                assert_eq!(refused_event_type, "agora.tool_call");
+                assert_eq!(correlation_path_snapshot.len(), 2);
+            }
+            _ => panic!("expected Refusal body"),
+        }
+    }
+
+    #[test]
+    fn test_refusal_reason_too_long_rejected() {
+        let identity = make_identity(0xE7);
+        let mut chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
+
+        // Reason > 256 bytes should fail verify_chain.
+        chain
+            .append(
+                SigchainBody::Refusal {
+                    refused_event_type: "agora.tool_call".to_owned(),
+                    reason: "x".repeat(257),
+                    correlation_path_snapshot: vec![],
+                    timestamp: 1,
+                },
+                &identity,
+            )
+            .expect("append did not fail (verify_chain should fail)");
+
+        assert!(chain.verify_chain().is_err());
+    }
+
+    #[test]
+    fn test_refusal_path_too_long_rejected() {
+        let identity = make_identity(0xE8);
+        let mut chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
+
+        let oversized_path: Vec<AgentId> =
+            (0u8..17).map(|i| make_identity(0xF0 + i).agent_id).collect();
+
+        chain
+            .append(
+                SigchainBody::Refusal {
+                    refused_event_type: "agora.tool_call".to_owned(),
+                    reason: "loop".to_owned(),
+                    correlation_path_snapshot: oversized_path,
+                    timestamp: 1,
+                },
+                &identity,
+            )
+            .expect("append did not fail (verify_chain should fail)");
+
+        assert!(chain.verify_chain().is_err());
+    }
+
+    #[test]
+    fn test_refusal_variant_name() {
+        let body = SigchainBody::Refusal {
+            refused_event_type: "agora.tool_call".to_owned(),
+            reason: "loop".to_owned(),
+            correlation_path_snapshot: vec![],
+            timestamp: 0,
+        };
+        assert_eq!(body.variant_name(), "Refusal");
     }
 }
