@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use agora_core::api::*;
 use reqwest::Client;
@@ -9,6 +10,8 @@ pub struct AgoraClient {
     http: Client,
     base_url: String,
     access_token: Option<String>,
+    /// S-02: monotonic counter for idempotency txn IDs; no Uuid::new_v4()
+    txn_counter: AtomicU64,
 }
 
 impl AgoraClient {
@@ -17,7 +20,13 @@ impl AgoraClient {
             http: Client::new(),
             base_url: base_url.trim_end_matches('/').to_owned(),
             access_token: None,
+            txn_counter: AtomicU64::new(1),
         }
+    }
+
+    /// Generate a unique, deterministic transaction ID for idempotent Matrix requests.
+    fn next_txn_id(&self) -> String {
+        format!("{:016x}", self.txn_counter.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn set_token(&mut self, token: String) {
@@ -209,7 +218,7 @@ impl AgoraClient {
         body: &str,
     ) -> Result<SendEventResponse, CliClientError> {
         let auth = self.auth_header()?;
-        let txn_id = uuid::Uuid::new_v4().simple().to_string();
+        let txn_id = self.next_txn_id();
         let resp = self
             .http
             .put(self.url(&format!(
@@ -236,7 +245,7 @@ impl AgoraClient {
         content: serde_json::Value,
     ) -> Result<SendEventResponse, CliClientError> {
         let auth = self.auth_header()?;
-        let txn_id = uuid::Uuid::new_v4().simple().to_string();
+        let txn_id = self.next_txn_id();
         let resp = self
             .http
             .put(self.url(&format!(

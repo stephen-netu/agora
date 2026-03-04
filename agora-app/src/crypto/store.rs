@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -8,21 +8,21 @@ pub struct CryptoStoreData {
     /// Olm sessions keyed by sender Curve25519 identity key.
     /// Each key maps to a list of pickled sessions (multiple sessions per device possible).
     #[serde(default)]
-    pub olm_sessions: HashMap<String, Vec<String>>,
+    pub olm_sessions: BTreeMap<String, Vec<String>>,
     /// Outbound Megolm sessions keyed by room_id -> pickled session.
     #[serde(default)]
-    pub outbound_group_sessions: HashMap<String, OutboundGroupSessionData>,
+    pub outbound_group_sessions: BTreeMap<String, OutboundGroupSessionData>,
     /// Inbound Megolm sessions keyed by "{room_id}|{sender_key}|{session_id}" -> pickled session.
     #[serde(default)]
-    pub inbound_group_sessions: HashMap<String, InboundGroupSessionData>,
+    pub inbound_group_sessions: BTreeMap<String, InboundGroupSessionData>,
     /// Tracks which devices have received room keys for each outbound session.
     /// Keyed by room_id -> set of "{user_id}|{device_id}".
     #[serde(default)]
-    pub shared_sessions: HashMap<String, Vec<String>>,
+    pub shared_sessions: BTreeMap<String, Vec<String>>,
     /// Message indices seen per inbound session for replay prevention.
     /// Keyed by session composite key -> list of (message_index, event_id).
     #[serde(default)]
-    pub seen_indices: HashMap<String, Vec<(u32, String)>>,
+    pub seen_indices: BTreeMap<String, Vec<(u32, String)>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
