@@ -25,7 +25,7 @@ pub mod store;
 pub mod timestamp;
 
 pub use ids::{event_id, media_id, room_id};
-pub use timestamp::{SequenceTimestamp, TimestampProvider};
+pub use timestamp::{SequenceTimestamp, TimestampProvider, DEFAULT_EPOCH_MS};
 
 /// Errors produced by agora-crypto operations.
 #[derive(Debug, thiserror::Error)]

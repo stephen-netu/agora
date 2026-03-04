@@ -8,6 +8,13 @@ use std::sync::Arc;
 
 use crate::CryptoError;
 
+/// Default epoch offset shared across all Agora nodes: 2024-03-01 00:00:00 UTC in milliseconds.
+///
+/// All `SequenceTimestamp` instances should use this as their `epoch_offset` so that
+/// IDs from different nodes are comparable and sequence numbers can be resumed correctly
+/// after a restart.
+pub const DEFAULT_EPOCH_MS: u64 = 1_709_251_200_000;
+
 /// Provides monotonically increasing, deterministic timestamps.
 ///
 /// Implementations must never access `SystemTime`, `Instant`, or any
@@ -59,7 +66,7 @@ impl Default for SequenceTimestamp {
     /// Default epoch offset: 2024-03-01 00:00:00 UTC in milliseconds.
     /// Chosen to keep IDs in a reasonable numeric range while being deterministic.
     fn default() -> Self {
-        Self::new(1_709_251_200_000)
+        Self::new(DEFAULT_EPOCH_MS)
     }
 }
 
@@ -113,6 +120,6 @@ mod tests {
         // Runtime proof: values are purely counter-derived.
         let ts = SequenceTimestamp::default();
         let v = ts.next_timestamp().unwrap();
-        assert_eq!(v, 1_709_251_200_000);
+        assert_eq!(v, DEFAULT_EPOCH_MS);
     }
 }

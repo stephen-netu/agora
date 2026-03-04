@@ -23,4 +23,7 @@ pub struct AppState {
     pub typing: TypingState,
     /// S-02 compliant timestamp provider. Never use SystemTime::now() — use this.
     pub timestamp: Arc<dyn TimestampProvider>,
+    /// Server-side secret key for access token generation. Loaded from disk on startup;
+    /// generated on first boot and persisted. Never transmitted to clients.
+    pub token_secret: [u8; 32],
 }

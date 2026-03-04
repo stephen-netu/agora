@@ -92,16 +92,20 @@ pub fn media_id(uploader: &str, content_hash: &[u8; 32], timestamp: u64) -> Stri
     URL_SAFE_NO_PAD.encode(&hash.as_bytes()[..16])
 }
 
-/// Generate a deterministic access token.
+/// Generate a deterministic access token bound to a server secret.
 ///
 /// Format: `agora_<base64url(hash[..24])>`
 ///
+/// The `server_secret` is a 32-byte key known only to the server. This
+/// prevents offline precomputation of tokens from public inputs alone.
+///
 /// # Arguments
+/// - `server_secret` — server-side 32-byte secret key (never exposed to clients)
 /// - `user_id` — the authenticated user's ID
 /// - `device_id` — the device being registered
 /// - `timestamp` — monotonic sequence timestamp
-pub fn access_token(user_id: &str, device_id: &str, timestamp: u64) -> String {
-    let mut hasher = blake3::Hasher::new();
+pub fn access_token(server_secret: &[u8; 32], user_id: &str, device_id: &str, timestamp: u64) -> String {
+    let mut hasher = blake3::Hasher::new_keyed(server_secret);
     hasher.update(b"agora:access_token:v1");
     hasher.update(&[SEP]);
     hasher.update(user_id.as_bytes());
@@ -176,6 +180,24 @@ mod tests {
         let id = device_id("@alice:localhost", 0);
         assert_eq!(id.len(), 10);
         assert!(id.chars().all(|c| c.is_ascii_hexdigit() && (c.is_uppercase() || c.is_ascii_digit())));
+    }
+
+    #[test]
+    fn access_token_deterministic_with_secret() {
+        let secret = [0x42u8; 32];
+        let t1 = access_token(&secret, "@alice:localhost", "DEVID", 99);
+        let t2 = access_token(&secret, "@alice:localhost", "DEVID", 99);
+        assert_eq!(t1, t2);
+        assert!(t1.starts_with("agora_"));
+    }
+
+    #[test]
+    fn access_token_differs_by_secret() {
+        let secret_a = [0x01u8; 32];
+        let secret_b = [0x02u8; 32];
+        let t_a = access_token(&secret_a, "@alice:localhost", "DEV", 0);
+        let t_b = access_token(&secret_b, "@alice:localhost", "DEV", 0);
+        assert_ne!(t_a, t_b, "different secrets must produce different tokens");
     }
 
     #[test]
