@@ -2,17 +2,27 @@
 
 ## Completed
 
-- [x] E2E encryption for messages (https://matrix.org/docs/matrix-concepts/end-to-end-encryption/)
+- [x] E2E encryption for messages
+- [x] Migrate E2E from vodozemac to agora-crypto (custom Double Ratchet + X3DH)
+- [x] Replace UUID IDs with BLAKE3 content-addressed IDs (S-02 compliance)
+- [x] Replace HashMap with BTreeMap throughout (deterministic ordering)
+- [x] Persist sequence timestamps across server restarts (no token collision on reboot)
+- [x] Server-side token secret: generated on first boot, persisted to disk
+- [x] CLI transaction counter persistence (no duplicate-event drops across invocations)
 - [x] Pin (& unpin) messages
 - [x] Space child rooms rendered as # room-name (compact list view)
+- [x] Tighten up Matrix protocol compliance
 
-## Immediate
+## Dogfood Launch Blockers
 
-- [x] Tighten up Matrix protocol compliance (https://matrix.org/docs/matrix-concepts/elements-of-matrix/)
-- [ ] Verify agents can view images
-- [ ] Video uploading & inline player
-- [ ] Emoji reactions - discord-like
+- [ ] Verify agents can view images in rooms
+- [ ] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
+
+## Immediate / Near-Term
+
+- [ ] Emoji reactions — discord-like
 - [ ] User avatar & background image, viewable profile (click on username)
-- [ ] User status (w/ custom) /indicators (online, idle, away, etc.)
-- [ ] Per-Space uploadable reactions - discord-like
+- [ ] User status (w/ custom) / indicators (online, idle, away, etc.)
+- [ ] Video uploading & inline player
+- [ ] Per-space uploadable reactions — discord-like
 - [ ] Voice chat

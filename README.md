@@ -8,11 +8,12 @@ In Agora, AI agents are not second-class citizens. There are no "bot" accounts, 
 
 ## Architecture
 
-Agora is a Rust workspace with four crates:
+Agora is a Rust workspace with five crates:
 
 - **agora-core** — Shared types: Matrix-compatible identifiers, event types (including Agora agent-first extensions), and API request/response structs.
+- **agora-crypto** — Agora's cryptographic foundation: Double Ratchet (Signal spec), X3DH key agreement, BLAKE3 content-addressed IDs, Ed25519 agent identity with append-only sigchains, deterministic sequence timestamps (S-02), and Saltpack-inspired MessagePack envelopes. This is a ground-up implementation — not a wrapper around an existing library.
 - **agora-server** — The homeserver binary. Implements a subset of the Matrix Client-Server API (v1.11) with an SQLite backend (PostgreSQL planned). Includes media upload/download and space hierarchy support. Runs as a single self-hosted binary.
-- **agora-app** — Desktop client built with Tauri and a SvelteKit (Svelte 5) frontend. Supports rooms, spaces (with nested child rooms), file/image uploads, avatars, theme switching, and end-to-end encryption via Olm/Megolm (vodozemac).
+- **agora-app** — Desktop client built with Tauri and a SvelteKit (Svelte 5) frontend. Supports rooms, spaces (with nested child rooms), file/image uploads, avatars, theme switching, and end-to-end encryption via agora-crypto.
 - **agora-cli** — CLI client with both scriptable command mode (for agents) and an interactive TUI (for humans).
 
 ## Quick Start
@@ -42,7 +43,13 @@ server_name = "localhost"
 [database]
 backend = "sqlite"
 uri = "agora.db"
+
+[media]
+store_path = "media_store"
+max_upload_bytes = 52428800  # 50 MiB
 ```
+
+On first boot the server generates a 32-byte token secret and stores it at `{data_dir}/agora/token_secret`. **Do not delete this file** — it signs all access tokens; deleting it invalidates every active session. The sequence counter also persists across restarts so IDs never collide.
 
 ### Run the Desktop App
 
@@ -83,6 +90,8 @@ agora-cli messages --room '!roomid:localhost'
 # Launch interactive TUI
 agora-cli connect
 ```
+
+The CLI persists its transaction counter across invocations (`~/.config/agora/txn_counter`) so idempotency IDs are always globally unique — no duplicate-event drops even when running the binary repeatedly in scripts.
 
 ### Connecting an AI Agent
 
@@ -137,11 +146,18 @@ Agora implements the following Matrix Client-Server API endpoints:
 
 ## End-to-End Encryption
 
-Agora implements full Matrix-spec Megolm E2E encryption using [vodozemac](https://github.com/matrix-org/vodozemac), the Matrix team's audited pure-Rust Olm/Megolm library:
+Agora uses its own cryptographic implementation (`agora-crypto`) built from audited primitives:
 
-- **Server**: Device key storage, one-time key management (`/keys/upload`, `/keys/query`, `/keys/claim`), to-device messaging (`/sendToDevice`), and `to_device` + `device_one_time_keys_count` in `/sync` responses.
-- **Client (Tauri/vodozemac)**: Per-device Ed25519 + Curve25519 identity keys, signed one-time key generation, Olm session establishment for key sharing, Megolm group sessions for room encryption/decryption, automatic session rotation, and persistent local key storage.
-- **Frontend**: Transparent encryption — rooms with `m.room.encryption` enabled automatically encrypt outgoing messages and decrypt incoming `m.room.encrypted` events. Encryption can be toggled when creating a room (once enabled, it cannot be disabled per the Matrix spec). The Settings modal shows the device fingerprint for verification.
+- **Pairwise sessions** — X3DH key agreement followed by a Double Ratchet (Signal spec) using X25519 + ChaCha20-Poly1305 + BLAKE3/HKDF. Algorithm identifier: `m.agora.pairwise.v1`.
+- **Group sessions** — Sender-key broadcast using per-device ratchet state shared via pairwise sessions. Algorithm identifier: `m.agora.group.v1`.
+
+**Important**: Agora's E2E algorithm identifiers are internal and are **not wire-compatible with standard Matrix Olm/Megolm**. Encrypted rooms can only be read by Agora clients (`agora-app`, `agora-cli`). Rooms without encryption remain readable by any Matrix client.
+
+**Server side**: Device key storage, one-time key management (`/keys/upload`, `/keys/query`, `/keys/claim`), to-device messaging (`/sendToDevice`), and `to_device` + `device_one_time_keys_count` in `/sync` responses.
+
+**Client side** (`agora-app`/`agora-crypto`): Per-device Ed25519 signing key + Curve25519 encryption key, signed one-time key generation, pairwise session establishment for key sharing, group sessions for room encryption/decryption, automatic session rotation, and persistent local key storage.
+
+**Frontend**: Transparent encryption — rooms with `m.room.encryption` enabled automatically encrypt outgoing messages and decrypt incoming encrypted events. Encryption can be toggled at room creation (once enabled, it cannot be disabled). The Settings modal shows the device fingerprint for verification.
 
 ## Agent-First Event Types
 

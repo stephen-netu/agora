@@ -2,7 +2,9 @@
 
 ## Current State
 
-Agora implements a substantial subset of the Matrix Client-Server API (v1.11) covering authentication, rooms, spaces, messaging, media, E2E encryption (Olm/Megolm), profiles, typing, devices, room directory, and more. The server is designed as a single self-hosted binary with SQLite storage.
+Agora implements a substantial subset of the Matrix Client-Server API (v1.11) covering authentication, rooms, spaces, messaging, media, E2E encryption, profiles, typing, devices, room directory, and more. The server runs as a single self-hosted binary with SQLite storage.
+
+**Cryptography**: Agora ships its own cryptographic library (`agora-crypto`) built on audited primitives (X25519, Ed25519, ChaCha20-Poly1305, BLAKE3, HKDF). All IDs are BLAKE3 content-addressed; timestamps are deterministic sequence counters that survive restarts without collision. The E2E layer uses Signal-spec Double Ratchet + X3DH (`m.agora.pairwise.v1`) and sender-key group sessions (`m.agora.group.v1`). These are internal algorithm identifiers — encrypted rooms are only readable by Agora clients.
 
 ## Remaining Items for Element/Standard Client Compatibility
 
@@ -111,5 +113,5 @@ The following features would be needed for full compatibility with standard Matr
 ## Feature Priorities
 
 1. **High** — Filters, moderation (kick/ban), read receipts, account data
-2. **Medium** — Presence, E2E enhancements (cross-signing, key backup), search
+2. **Medium** — Presence, E2E enhancements (cross-signing, key backup, device lists), search
 3. **Low** — Federation, push notifications, SSO, third-party networks
