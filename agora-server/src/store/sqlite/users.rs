@@ -1,7 +1,7 @@
 use sqlx::Row;
 
 use crate::store::{
-    AccessTokenRecord, StorageError, UserRecord,
+    AccessTokenRecord, StorageError, UserRecord, UserSearchRecord,
 };
 use super::SqliteStore;
 
@@ -131,5 +131,32 @@ impl SqliteStore {
             .await
             .map_err(|e| StorageError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    pub async fn search_users_impl(
+        &self,
+        term: &str,
+        limit: u64,
+    ) -> Result<Vec<UserSearchRecord>, StorageError> {
+        let pattern = format!("%{}%", term);
+        let rows = sqlx::query(
+            "SELECT user_id, display_name, avatar_url FROM users \
+             WHERE user_id LIKE ?1 OR display_name LIKE ?1 \
+             LIMIT ?2",
+        )
+        .bind(&pattern)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(rows
+            .iter()
+            .map(|r| UserSearchRecord {
+                user_id: r.get("user_id"),
+                display_name: r.get("display_name"),
+                avatar_url: r.get("avatar_url"),
+            })
+            .collect())
     }
 }

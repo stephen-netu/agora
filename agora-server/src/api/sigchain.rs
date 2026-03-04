@@ -13,7 +13,7 @@ use agora_crypto::{Sigchain, SigchainLink};
 
 use crate::error::ApiError;
 use crate::state::AppState;
-use crate::store::{SigchainLinkRecord, Storage};
+use crate::store::SigchainLinkRecord;
 
 // ── Request / response types ──────────────────────────────────────────────────
 

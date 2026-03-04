@@ -392,6 +392,26 @@ export class AgoraApi {
 			}
 		);
 	}
+
+	async searchUsers(term: string, limit: number = 10): Promise<{ results: Array<{ user_id: string; display_name?: string; avatar_url?: string }>; limited: boolean }> {
+		return this.request('POST', '/_matrix/client/v3/user_directory/search', {
+			headers: this.authHeaders(),
+			body: { search_term: term, limit }
+		});
+	}
+
+	async getProfile(userId: string): Promise<{ displayname?: string; avatar_url?: string }> {
+		return this.request('GET', `/_matrix/client/v3/profile/${encodeURIComponent(userId)}`, {
+			headers: this.authHeaders()
+		});
+	}
+
+	async setDisplayName(userId: string, displayname: string): Promise<void> {
+		await this.request('PUT', `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
+			headers: this.authHeaders(),
+			body: { displayname }
+		});
+	}
 }
 
 export const api = new AgoraApi();
