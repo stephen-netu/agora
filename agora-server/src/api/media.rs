@@ -43,9 +43,12 @@ pub async fn upload(
         .unwrap_or("application/octet-stream")
         .to_owned();
 
-    let media_id = uuid::Uuid::new_v4().simple().to_string();
+    // S-02: deterministic media ID from BLAKE3(uploader + content_hash + timestamp)
+    let ts = state.timestamp.next_timestamp()?;
+    let content_hash: [u8; 32] = blake3::hash(&body).into();
+    let media_id = agora_crypto::ids::media_id(user_id.as_str(), &content_hash, ts);
 
-    let prefix = &media_id[..2];
+    let prefix = media_id.get(..2).unwrap_or("xx");
     let dir = state.media_path.join(prefix);
     tokio::fs::create_dir_all(&dir).await.map_err(|e| {
         tracing::error!("failed to create media dir: {e}");
@@ -63,11 +66,6 @@ pub async fn upload(
     })?;
     file.flush().await.ok();
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-
     let record = MediaRecord {
         media_id: media_id.clone(),
         server_name: state.server_name.clone(),
@@ -75,7 +73,7 @@ pub async fn upload(
         content_type,
         file_size: size as i64,
         upload_name: query.filename,
-        created_at: now,
+        created_at: ts as i64,
     };
 
     state.store.store_media(&record).await?;
@@ -98,7 +96,7 @@ pub async fn download(
         return Err(ApiError::not_found("remote media not supported"));
     }
 
-    let prefix = &record.media_id[..2];
+    let prefix = record.media_id.get(..2).unwrap_or("xx");
     let file_path = state.media_path.join(prefix).join(&record.media_id);
 
     let file = tokio::fs::File::open(&file_path).await.map_err(|e| {

@@ -12,7 +12,7 @@ pub async fn list_devices(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let tokens = state.store.get_devices_for_user(user_id.as_str()).await?;
 
-    let mut seen = std::collections::HashMap::new();
+    let mut seen = std::collections::BTreeMap::new();
     for t in &tokens {
         seen.entry(t.device_id.clone()).or_insert_with(|| {
             serde_json::json!({

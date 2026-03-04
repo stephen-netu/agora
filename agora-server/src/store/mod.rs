@@ -195,7 +195,7 @@ pub trait Storage: Send + Sync + 'static {
         &self,
         user_id: &str,
         device_id: &str,
-    ) -> Result<std::collections::HashMap<String, u64>, StorageError>;
+    ) -> Result<std::collections::BTreeMap<String, u64>, StorageError>;
 
     // -- E2EE: To-device messages --------------------------------------------
     async fn queue_to_device(&self, records: &[ToDeviceRecord]) -> Result<(), StorageError>;

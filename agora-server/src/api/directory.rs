@@ -8,7 +8,7 @@ use crate::state::AppState;
 /// GET /_matrix/client/v3/publicRooms
 pub async fn get_public_rooms(
     State(state): State<AppState>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
+    Query(query): Query<std::collections::BTreeMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let limit: u64 = query
         .get("limit")

@@ -9,13 +9,6 @@ use crate::api::AuthUser;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-}
-
 /// PUT /_matrix/client/v3/rooms/{roomId}/send/{eventType}/{txnId}
 pub async fn send_event(
     State(state): State<AppState>,
@@ -38,7 +31,20 @@ pub async fn send_event(
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
-    let event_id = EventId::new();
+    // S-02: deterministic timestamp + content-addressed event ID
+    let ts = state.timestamp.next_timestamp()?;
+    let content_bytes = serde_json::to_vec(&content)
+        .map_err(|e| ApiError::bad_json(format!("content serialization: {e}")))?;
+    let event_id_str = agora_crypto::ids::event_id(
+        &room_id,
+        user_id.as_str(),
+        &event_type,
+        &content_bytes,
+        ts,
+    );
+    let event_id = EventId::parse(&event_id_str)
+        .map_err(|e| ApiError::unknown(format!("event id parse: {e}")))?;
+
     let event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,
@@ -46,7 +52,7 @@ pub async fn send_event(
         event_type,
         state_key: None,
         content,
-        origin_server_ts: now_millis(),
+        origin_server_ts: ts,
         stream_ordering: None,
     };
 
@@ -82,16 +88,31 @@ pub async fn redact_event(
 
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
-    let event_id = EventId::new();
+
+    // S-02: deterministic timestamp + content-addressed event ID
+    let ts = state.timestamp.next_timestamp()?;
     let reason = body.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    let content = serde_json::json!({ "redacts": target_event_id, "reason": reason });
+    let content_bytes = serde_json::to_vec(&content)
+        .map_err(|e| ApiError::bad_json(format!("content serialization: {e}")))?;
+    let event_id_str = agora_crypto::ids::event_id(
+        &room_id,
+        user_id.as_str(),
+        "m.room.redaction",
+        &content_bytes,
+        ts,
+    );
+    let event_id = EventId::parse(&event_id_str)
+        .map_err(|e| ApiError::unknown(format!("event id parse: {e}")))?;
+
     let redaction_event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,
         sender: user_id.clone(),
         event_type: "m.room.redaction".to_owned(),
         state_key: None,
-        content: serde_json::json!({ "redacts": target_event_id, "reason": reason }),
-        origin_server_ts: now_millis(),
+        content,
+        origin_server_ts: ts,
         stream_ordering: None,
     };
 
@@ -161,7 +182,19 @@ pub async fn set_state(
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
-    let event_id = EventId::new();
+    let ts = state.timestamp.next_timestamp()?;
+    let content_bytes = serde_json::to_vec(&content)
+        .map_err(|e| ApiError::bad_json(format!("content serialization: {e}")))?;
+    let event_id_str = agora_crypto::ids::event_id(
+        &room_id,
+        user_id.as_str(),
+        &event_type,
+        &content_bytes,
+        ts,
+    );
+    let event_id = EventId::parse(&event_id_str)
+        .map_err(|e| ApiError::unknown(format!("event id parse: {e}")))?;
+
     let event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,
@@ -169,7 +202,7 @@ pub async fn set_state(
         event_type,
         state_key: Some(state_key),
         content,
-        origin_server_ts: now_millis(),
+        origin_server_ts: ts,
         stream_ordering: None,
     };
 

@@ -1,0 +1,27 @@
+[package]
+name = "agora-crypto"
+version.workspace = true
+edition.workspace = true
+description = "Sovereign cryptographic primitives: Double Ratchet, X3DH, Saltpack envelopes, BLAKE3 IDs"
+license.workspace = true
+
+[dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+ed25519-dalek = { version = "2" }
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+chacha20poly1305 = "0.10"
+blake3 = "1"
+serde = { workspace = true }
+rmp-serde = "1"
+zeroize = { version = "1", features = ["derive"] }
+base64 = "0.22"
+thiserror = { workspace = true }
+rand_core = "0.6"
+
+[dev-dependencies]
+hex-literal = "0.4"
+
+[lints]
+workspace = true

@@ -8,13 +8,6 @@ use crate::error::ApiError;
 use crate::state::AppState;
 use crate::store::ToDeviceRecord;
 
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
-
 /// PUT /_matrix/client/v3/sendToDevice/{eventType}/{txnId}
 pub async fn send_to_device(
     State(state): State<AppState>,
@@ -23,7 +16,8 @@ pub async fn send_to_device(
     Json(body): Json<SendToDeviceRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut records = Vec::new();
-    let ts = now_millis();
+    // S-02: deterministic timestamp instead of SystemTime::now()
+    let ts = state.timestamp.next_timestamp()? as i64;
 
     for (recipient_user, devices) in &body.messages {
         for (recipient_device, content) in devices {

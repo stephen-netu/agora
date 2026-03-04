@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 use tracing_subscriber::EnvFilter;
 
+use agora_crypto::SequenceTimestamp;
+
 use crate::config::Config;
 use crate::state::AppState;
 use crate::store::sqlite::SqliteStore;
@@ -171,6 +173,8 @@ async fn main() -> anyhow::Result<()> {
         media_path,
         max_upload_bytes: config.media.max_upload_bytes,
         typing: Default::default(),
+        // S-02: deterministic sequence timestamp. Epoch = 2024-03-01 00:00:00 UTC in ms.
+        timestamp: SequenceTimestamp::default().into_arc(),
     };
 
     let cors = tower_http::cors::CorsLayer::new()

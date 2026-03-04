@@ -14,21 +14,6 @@ use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
 };
 
-fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
-
-fn generate_token() -> String {
-    format!("agora_{}", uuid::Uuid::new_v4().simple())
-}
-
-fn generate_device_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()[..10].to_uppercase()
-}
-
 /// POST /_matrix/client/v3/register
 pub async fn register(
     State(state): State<AppState>,
@@ -50,7 +35,12 @@ pub async fn register(
         .map_err(|e| ApiError::unknown(format!("password hash error: {e}")))?
         .to_string();
 
-    let now = now_millis();
+    // S-02: use deterministic sequence timestamp instead of SystemTime::now()
+    let ts = state.timestamp.next_timestamp()?;
+    let device_id = req.device_id.unwrap_or_else(|| {
+        agora_crypto::ids::device_id(user_id.as_str(), ts)
+    });
+    let token = agora_crypto::ids::access_token(user_id.as_str(), &device_id, ts);
 
     state
         .store
@@ -58,12 +48,9 @@ pub async fn register(
             user_id: user_id.as_str().to_owned(),
             display_name: Some(req.username.clone()),
             password_hash,
-            created_at: now,
+            created_at: ts as i64,
         })
         .await?;
-
-    let device_id = req.device_id.unwrap_or_else(generate_device_id);
-    let token = generate_token();
 
     state
         .store
@@ -71,7 +58,7 @@ pub async fn register(
             token: token.clone(),
             user_id: user_id.as_str().to_owned(),
             device_id: device_id.clone(),
-            created_at: now,
+            created_at: ts as i64,
         })
         .await?;
 
@@ -128,8 +115,12 @@ pub async fn login(
         .verify_password(password.as_bytes(), &parsed_hash)
         .map_err(|_| ApiError::forbidden("invalid username or password"))?;
 
-    let device_id = req.device_id.unwrap_or_else(generate_device_id);
-    let token = generate_token();
+    // S-02: deterministic timestamp for token creation
+    let ts = state.timestamp.next_timestamp()?;
+    let device_id = req.device_id.unwrap_or_else(|| {
+        agora_crypto::ids::device_id(&user_id_str, ts)
+    });
+    let token = agora_crypto::ids::access_token(&user_id_str, &device_id, ts);
 
     state
         .store
@@ -137,7 +128,7 @@ pub async fn login(
             token: token.clone(),
             user_id: user_id_str.clone(),
             device_id: device_id.clone(),
-            created_at: now_millis(),
+            created_at: ts as i64,
         })
         .await?;
 

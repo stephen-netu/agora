@@ -160,7 +160,7 @@ impl SqliteStore {
         &self,
         user_id: &str,
         device_id: &str,
-    ) -> Result<std::collections::HashMap<String, u64>, StorageError> {
+    ) -> Result<std::collections::BTreeMap<String, u64>, StorageError> {
         let rows = sqlx::query(
             "SELECT algorithm, COUNT(*) AS cnt
              FROM one_time_keys
@@ -173,7 +173,7 @@ impl SqliteStore {
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let mut counts = std::collections::HashMap::new();
+        let mut counts = std::collections::BTreeMap::new();
         for r in &rows {
             let alg: String = r.get("algorithm");
             let cnt: i64 = r.get("cnt");
