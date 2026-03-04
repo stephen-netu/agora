@@ -1,4 +1,4 @@
-//! End-to-end encryption using vodozemac
+//! End-to-end encryption using agora-crypto.
 
 pub mod commands;
 pub mod keys;
@@ -7,6 +7,3 @@ pub mod megolm;
 pub mod olm;
 pub mod sessions;
 pub mod store;
-
-pub use keys::{DeviceInfo, RoomKeyContent};
-pub use machine::{CryptoMachine, DecryptedPayload, EncryptedPayload};

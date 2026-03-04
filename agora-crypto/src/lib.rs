@@ -14,8 +14,10 @@
 #![deny(unused_variables)]
 #![deny(unused_mut)]
 
+pub mod account;
 pub mod agreement;
 pub mod envelope;
+pub mod group;
 pub mod identity;
 pub mod ids;
 pub mod ratchet;

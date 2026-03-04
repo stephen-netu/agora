@@ -72,7 +72,7 @@ pub fn decrypt_event(
 ) -> Result<DecryptedPayload, String> {
     let mut guard = state.0.lock().unwrap();
     let machine = guard.as_mut().ok_or("crypto not initialized")?;
-    machine.decrypt_megolm(&room_id, &sender_key, &session_id, &ciphertext)
+    machine.decrypt_group(&room_id, &sender_key, &session_id, &ciphertext)
 }
 
 #[tauri::command]
@@ -103,10 +103,11 @@ pub fn create_olm_session_from_otk(
     state: State<CryptoState>,
     their_curve_key: String,
     one_time_key: String,
+    otk_counter: Option<u64>,
 ) -> Result<(), String> {
     let mut guard = state.0.lock().unwrap();
     let machine = guard.as_mut().ok_or("crypto not initialized")?;
-    machine.create_outbound_olm_from_otk(&their_curve_key, &one_time_key)
+    machine.create_outbound_olm_from_otk(&their_curve_key, &one_time_key, otk_counter)
 }
 
 #[tauri::command]

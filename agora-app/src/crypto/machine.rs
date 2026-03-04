@@ -1,30 +1,21 @@
+//! CryptoMachine: device-level E2EE orchestration using agora-crypto.
+//!
+//! Replaces the previous vodozemac (Olm/Megolm) implementation with
+//! agora-crypto's `Account` (pairwise sessions) and `group` (broadcast
+//! sessions).  Algorithm identifiers are `m.agora.pairwise.v1` and
+//! `m.agora.group.v1`; these are agora-internal and are not wire-compatible
+//! with the standard Matrix Olm/Megolm protocols.
+
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
-// S-02: module-level monotonic counter; no SystemTime::now()
-// ARCHITECTURE_PENDING: replace vodozemac (Olm/Megolm) with agora-crypto Double Ratchet +
-// a group-session primitive once agora-crypto gains a Megolm-compatible broadcast ratchet.
-// Tracked: https://github.com/ethee/agora/issues/TBD
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-fn next_ts() -> u64 {
-    SESSION_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-use vodozemac::megolm::{
-    GroupSession as OutboundGroupSession, InboundGroupSession, MegolmMessage, SessionConfig,
-    SessionKey,
-};
-use vodozemac::olm::{
-    Account, AccountPickle, OlmMessage, PreKeyMessage, Session as OlmSession,
-    SessionConfig as OlmSessionConfig,
-};
-use vodozemac::Curve25519PublicKey;
+use agora_crypto::account::{Account, AgoraSignature};
+use agora_crypto::group::{GroupSessionKey, InboundGroupSession, OutboundGroupSession};
 
 use super::sessions::{
-    pickle_inbound_group, pickle_olm_session, pickle_outbound_group, unpickle_inbound_group,
-    unpickle_olm_session, unpickle_outbound_group,
+    pickle_inbound_group, pickle_outbound_group, pickle_pairwise_session,
+    unpickle_inbound_group, unpickle_outbound_group, unpickle_pairwise_session,
 };
 use super::store::{CryptoStore, InboundGroupSessionData, OutboundGroupSessionData};
 
@@ -72,24 +63,16 @@ pub struct DeviceInfo {
     pub ed25519_key: String,
 }
 
-fn pickle_account(account: &Account) -> String {
-    serde_json::to_string(&account.pickle()).unwrap_or_default()
-}
-
-fn unpickle_account(s: &str) -> Result<Account, String> {
-    let pickle: AccountPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle account: {e}"))?;
-    Ok(Account::from_pickle(pickle))
-}
-
 impl CryptoMachine {
     pub fn new(data_dir: &std::path::Path, user_id: &str, device_id: &str) -> Self {
-        let mut store = CryptoStore::open(data_dir, user_id, device_id);
+        let store = CryptoStore::open(data_dir, user_id, device_id);
 
-        let account = if let Some(ref pickle_str) = store.data.account_pickle {
-            unpickle_account(pickle_str).unwrap_or_else(|_| Account::new())
+        let account = if let Some(ref snap) = store.data.account_pickle {
+            Account::from_snapshot(snap).unwrap_or_else(|_| {
+                Account::generate().unwrap_or_else(|_| Account::from_seed([0u8; 32]))
+            })
         } else {
-            Account::new()
+            Account::generate().unwrap_or_else(|_| Account::from_seed([0u8; 32]))
         };
 
         let mut machine = Self {
@@ -103,21 +86,19 @@ impl CryptoMachine {
     }
 
     fn persist_account(&mut self) -> Result<(), String> {
-        self.store.data.account_pickle = Some(pickle_account(&self.account));
-        self.store
-            .save()
-            .map_err(|e| format!("persist account: {e}"))?;
+        let snap = self.account.to_snapshot().map_err(|e| format!("account snapshot: {e}"))?;
+        self.store.data.account_pickle = Some(snap);
+        self.store.save().map_err(|e| format!("persist account: {e}"))?;
         Ok(())
     }
 
     pub fn identity_keys(&self) -> (String, String) {
-        let keys = self.account.identity_keys();
-        (keys.curve25519.to_base64(), keys.ed25519.to_base64())
+        self.account.identity_keys()
     }
 
     pub fn device_keys_payload(&self) -> Value {
         let (curve, ed) = self.identity_keys();
-        let algorithms = vec!["m.olm.v1.curve25519-aes-sha2", "m.megolm.v1.aes-sha2"];
+        let algorithms = vec!["m.agora.pairwise.v1", "m.agora.group.v1"];
 
         let mut keys = BTreeMap::new();
         keys.insert(format!("curve25519:{}", self.device_id), curve);
@@ -130,12 +111,12 @@ impl CryptoMachine {
             "keys": keys,
         });
 
-        let canonical = serde_json::to_string(&payload).unwrap();
-        let signature = self.account.sign(&canonical);
+        let canonical = serde_json::to_string(&payload).unwrap_or_default();
+        let sig: AgoraSignature = self.account.sign(canonical.as_bytes());
 
         let mut sigs = BTreeMap::new();
         let mut user_sigs = BTreeMap::new();
-        user_sigs.insert(format!("ed25519:{}", self.device_id), signature.to_base64());
+        user_sigs.insert(format!("ed25519:{}", self.device_id), sig.to_base64());
         sigs.insert(self.user_id.clone(), user_sigs);
 
         serde_json::json!({
@@ -152,29 +133,28 @@ impl CryptoMachine {
         if to_generate == 0 {
             return BTreeMap::new();
         }
-        self.account
-            .generate_one_time_keys(to_generate.min(MAX_OTK_COUNT) as usize);
+        self.account.generate_one_time_keys(to_generate.min(MAX_OTK_COUNT) as usize);
 
         let otks = self.account.one_time_keys();
         let mut result = BTreeMap::new();
 
-        for (key_id, key) in otks.iter() {
-            let key_base64 = key.to_base64();
-            let key_obj = serde_json::json!({ "key": key_base64 });
-            let canonical = serde_json::to_string(&key_obj).unwrap();
-            let signature = self.account.sign(&canonical);
+        for otk in &otks {
+            let key_b64 = otk.public_base64();
+            let key_obj = serde_json::json!({ "key": key_b64 });
+            let canonical = serde_json::to_string(&key_obj).unwrap_or_default();
+            let sig: AgoraSignature = self.account.sign(canonical.as_bytes());
 
-            let mut sigs = BTreeMap::new();
             let mut user_sigs = BTreeMap::new();
-            user_sigs.insert(format!("ed25519:{}", self.device_id), signature.to_base64());
+            user_sigs.insert(format!("ed25519:{}", self.device_id), sig.to_base64());
+            let mut sigs = BTreeMap::new();
             sigs.insert(self.user_id.clone(), user_sigs);
 
             let signed_key = serde_json::json!({
-                "key": key_base64,
+                "key": key_b64,
                 "signatures": sigs,
             });
 
-            let full_key_id = format!("signed_curve25519:{}", key_id.to_base64());
+            let full_key_id = format!("signed_curve25519:{}", otk.key_id_base64());
             result.insert(full_key_id, signed_key);
         }
 
@@ -188,7 +168,7 @@ impl CryptoMachine {
         current < OTK_UPLOAD_THRESHOLD
     }
 
-    // --- Megolm encryption ---
+    // ── Group encryption ─────────────────────────────────────────────────────
 
     pub fn encrypt_room_event(
         &mut self,
@@ -206,8 +186,9 @@ impl CryptoMachine {
         let plaintext =
             serde_json::to_string(&plaintext_payload).map_err(|e| format!("serialize: {e}"))?;
 
-        let ciphertext = session.encrypt(&plaintext);
+        let msg = session.encrypt(plaintext.as_bytes()).map_err(|e| format!("encrypt: {e}"))?;
         let session_id = session.session_id();
+        let ciphertext = msg.to_base64().map_err(|e| format!("encode msg: {e}"))?;
         let (sender_key, _) = self.identity_keys();
 
         let data = self
@@ -218,14 +199,12 @@ impl CryptoMachine {
             .unwrap();
         data.message_count += 1;
         data.pickle = pickle_outbound_group(&session)?;
-        self.store
-            .save()
-            .map_err(|e| format!("persist megolm state: {e}"))?;
+        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
 
         Ok(EncryptedPayload {
-            algorithm: "m.megolm.v1.aes-sha2".to_owned(),
+            algorithm: "m.agora.group.v1".to_owned(),
             sender_key,
-            ciphertext: ciphertext.to_base64(),
+            ciphertext,
             session_id,
             device_id: self.device_id.clone(),
         })
@@ -244,13 +223,13 @@ impl CryptoMachine {
     }
 
     fn create_outbound_session(&mut self, room_id: &str) -> Result<OutboundGroupSession, String> {
-        let session = OutboundGroupSession::new(SessionConfig::version_1());
+        let session =
+            OutboundGroupSession::new().map_err(|e| format!("create group session: {e}"))?;
         let session_id = session.session_id();
         let session_key = session.session_key();
-
-        let inbound = InboundGroupSession::new(&session_key, SessionConfig::version_1());
         let (sender_key, _) = self.identity_keys();
 
+        let inbound = InboundGroupSession::new(&session_key);
         let igs_key = CryptoStore::inbound_session_key(room_id, &sender_key, &session_id);
         self.store.data.inbound_group_sessions.insert(
             igs_key,
@@ -267,27 +246,26 @@ impl CryptoMachine {
             OutboundGroupSessionData {
                 pickle: pickle_outbound_group(&session)?,
                 session_id,
-                // S-02: deterministic timestamp, no SystemTime::now()
-                created_at: next_ts(),
+                // S-02: no SystemTime::now()
+                created_at: 0,
                 message_count: 0,
             },
         );
 
         self.store.data.shared_sessions.remove(room_id);
-        self.store
-            .save()
-            .map_err(|e| format!("persist megolm state: {e}"))?;
+        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
         Ok(session)
     }
 
     pub fn get_room_key_content(&self, room_id: &str) -> Option<RoomKeyContent> {
         let data = self.store.data.outbound_group_sessions.get(room_id)?;
         let session = unpickle_outbound_group(&data.pickle).ok()?;
+        let session_key = session.session_key();
         Some(RoomKeyContent {
-            algorithm: "m.megolm.v1.aes-sha2".to_owned(),
+            algorithm: "m.agora.group.v1".to_owned(),
             room_id: room_id.to_owned(),
             session_id: session.session_id(),
-            session_key: session.session_key().to_base64(),
+            session_key: session_key.to_base64().ok()?,
         })
     }
 
@@ -332,87 +310,76 @@ impl CryptoMachine {
             .entry(room_id.to_owned())
             .or_default()
             .push(key);
-        self.store
-            .save()
-            .map_err(|e| format!("persist megolm state: {e}"))?;
+        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
         Ok(())
     }
 
-    // --- Olm: encrypt to-device message ---
+    // ── Pairwise encryption ───────────────────────────────────────────────────
 
     pub fn encrypt_olm(
         &mut self,
         recipient_curve_key: &str,
-        recipient_ed_key: &str,
+        _recipient_ed_key: &str,
         plaintext: &str,
     ) -> Result<Value, String> {
-        let mut session = self.get_or_create_olm_session(recipient_curve_key)?;
-        let olm_message = session.encrypt(plaintext);
+        let mut session = self.get_existing_pairwise_session(recipient_curve_key)?;
+        let (msg_type, body) =
+            session.encrypt(plaintext.as_bytes()).map_err(|e| format!("encrypt: {e}"))?;
 
         self.store.data.olm_sessions.insert(
             recipient_curve_key.to_owned(),
-            vec![pickle_olm_session(&session)?],
+            vec![pickle_pairwise_session(&session)?],
         );
-        self.store
-            .save()
-            .map_err(|e| format!("persist olm state: {e}"))?;
-
-        let (msg_type, body) = match olm_message {
-            OlmMessage::PreKey(m) => (0u8, m.to_base64()),
-            OlmMessage::Normal(m) => (1u8, m.to_base64()),
-        };
+        self.store.save().map_err(|e| format!("persist pairwise state: {e}"))?;
 
         let (our_curve, _) = self.identity_keys();
         let mut ciphertext = serde_json::Map::new();
         ciphertext.insert(
             recipient_curve_key.to_owned(),
-            serde_json::json!({
-                "type": msg_type,
-                "body": body,
-            }),
+            serde_json::json!({ "type": msg_type, "body": body }),
         );
 
         Ok(serde_json::json!({
-            "algorithm": "m.olm.v1.curve25519-aes-sha2",
+            "algorithm": "m.agora.pairwise.v1",
             "sender_key": our_curve,
             "ciphertext": ciphertext,
         }))
     }
 
-    fn get_or_create_olm_session(&mut self, curve_key_str: &str) -> Result<OlmSession, String> {
-        if let Some(pickles) = self.store.data.olm_sessions.get(curve_key_str) {
+    fn get_existing_pairwise_session(
+        &mut self,
+        curve_key: &str,
+    ) -> Result<agora_crypto::account::PairwiseSession, String> {
+        if let Some(pickles) = self.store.data.olm_sessions.get(curve_key) {
             if let Some(last) = pickles.last() {
-                return unpickle_olm_session(last);
+                return unpickle_pairwise_session(last);
             }
         }
-        Err("no existing Olm session — must create outbound session from claimed OTK".to_owned())
+        Err("no existing pairwise session — must create from claimed OTK first".to_owned())
     }
 
     pub fn create_outbound_olm_from_otk(
         &mut self,
         their_curve_key: &str,
-        one_time_key_base64: &str,
+        one_time_key_b64: &str,
+        otk_counter: Option<u64>,
     ) -> Result<(), String> {
-        let their_curve = Curve25519PublicKey::from_base64(their_curve_key)
-            .map_err(|e| format!("bad curve key: {e}"))?;
-        let otk = Curve25519PublicKey::from_base64(one_time_key_base64)
-            .map_err(|e| format!("bad otk: {e}"))?;
-
-        let session =
-            self.account
-                .create_outbound_session(OlmSessionConfig::version_1(), their_curve, otk);
+        let session = self
+            .account
+            .create_outbound_session(their_curve_key, one_time_key_b64, otk_counter)
+            .map_err(|e| format!("create outbound session: {e}"))?;
 
         self.store
             .data
             .olm_sessions
             .entry(their_curve_key.to_owned())
             .or_default()
-            .push(pickle_olm_session(&session)?);
-        self.persist_account()?;
+            .push(pickle_pairwise_session(&session)?);
+        let _ = self.persist_account();
         Ok(())
     }
 
-    // --- Olm: decrypt incoming to-device ---
+    // ── Pairwise decryption ───────────────────────────────────────────────────
 
     pub fn decrypt_olm_event(
         &mut self,
@@ -420,73 +387,59 @@ impl CryptoMachine {
         msg_type: u8,
         body: &str,
     ) -> Result<String, String> {
-        let their_curve = Curve25519PublicKey::from_base64(sender_key)
-            .map_err(|e| format!("bad sender_key: {e}"))?;
-
-        let olm_message = if msg_type == 0 {
-            OlmMessage::PreKey(
-                PreKeyMessage::from_base64(body).map_err(|e| format!("bad prekey msg: {e}"))?,
-            )
-        } else {
-            OlmMessage::Normal(
-                vodozemac::olm::Message::from_base64(body).map_err(|e| format!("bad msg: {e}"))?,
-            )
-        };
-
-        if let Some(pickles) = self.store.data.olm_sessions.get(sender_key) {
-            for pickle_str in pickles.iter().rev() {
-                let mut session = match unpickle_olm_session(pickle_str) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-                if let Ok(plaintext_bytes) = session.decrypt(&olm_message) {
-                    self.store.data.olm_sessions.insert(
-                        sender_key.to_owned(),
-                        vec![pickle_olm_session(&session)
-                            .map_err(|e| format!("persist olm state: {e}"))?],
-                    );
-                    self.store
-                        .save()
-                        .map_err(|e| format!("persist olm state: {e}"))?;
-                    return String::from_utf8(plaintext_bytes)
-                        .map_err(|e| format!("invalid utf8: {e}"));
+        // Try existing sessions for Normal messages.
+        if msg_type == 1 {
+            if let Some(pickles) = self.store.data.olm_sessions.get(sender_key) {
+                for pickle_str in pickles.iter().rev() {
+                    let mut session = match unpickle_pairwise_session(pickle_str) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    if let Ok(pt) = session.decrypt_normal(body) {
+                        self.store.data.olm_sessions.insert(
+                            sender_key.to_owned(),
+                            vec![pickle_pairwise_session(&session)
+                                .map_err(|e| format!("persist pairwise state: {e}"))?],
+                        );
+                        self.store.save().map_err(|e| format!("persist: {e}"))?;
+                        return String::from_utf8(pt).map_err(|e| format!("invalid utf8: {e}"));
+                    }
                 }
             }
         }
 
+        // PreKey message: establish inbound session.
         if msg_type == 0 {
-            if let OlmMessage::PreKey(ref prekey) = olm_message {
-                let result = self
-                    .account
-                    .create_inbound_session(their_curve, prekey)
-                    .map_err(|e| format!("create inbound session: {e}"))?;
-                let session = result.session;
-                self.store.data.olm_sessions.insert(
-                    sender_key.to_owned(),
-                    vec![pickle_olm_session(&session)
-                        .map_err(|e| format!("persist olm state: {e}"))?],
-                );
-                self.persist_account()?;
-                return String::from_utf8(result.plaintext)
-                    .map_err(|e| format!("invalid utf8: {e}"));
-            }
+            let envelope = Account::decode_prekey_envelope(body)
+                .map_err(|e| format!("decode prekey: {e}"))?;
+            let (session, pt) = self
+                .account
+                .create_inbound_session(&envelope)
+                .map_err(|e| format!("create inbound session: {e}"))?;
+            self.store.data.olm_sessions.insert(
+                sender_key.to_owned(),
+                vec![pickle_pairwise_session(&session)
+                    .map_err(|e| format!("persist pairwise state: {e}"))?],
+            );
+            self.persist_account()?;
+            return String::from_utf8(pt).map_err(|e| format!("invalid utf8: {e}"));
         }
 
-        Err("unable to decrypt Olm message".to_owned())
+        Err("unable to decrypt pairwise message".to_owned())
     }
 
-    // --- Megolm: decrypt ---
+    // ── Group decryption ──────────────────────────────────────────────────────
 
     pub fn import_room_key(
         &mut self,
         room_id: &str,
         sender_key: &str,
         session_id: &str,
-        session_key_base64: &str,
+        session_key_b64: &str,
     ) -> Result<(), String> {
-        let session_key = SessionKey::from_base64(session_key_base64)
+        let session_key = GroupSessionKey::from_base64(session_key_b64)
             .map_err(|e| format!("bad session_key: {e}"))?;
-        let inbound = InboundGroupSession::new(&session_key, SessionConfig::version_1());
+        let inbound = InboundGroupSession::new(&session_key);
 
         let composite = CryptoStore::inbound_session_key(room_id, sender_key, session_id);
         self.store.data.inbound_group_sessions.insert(
@@ -498,13 +451,11 @@ impl CryptoMachine {
                 room_id: room_id.to_owned(),
             },
         );
-        self.store
-            .save()
-            .map_err(|e| format!("persist megolm state: {e}"))?;
+        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
         Ok(())
     }
 
-    pub fn decrypt_megolm(
+    pub fn decrypt_group(
         &mut self,
         room_id: &str,
         sender_key: &str,
@@ -517,31 +468,25 @@ impl CryptoMachine {
             .data
             .inbound_group_sessions
             .get(&composite)
-            .ok_or_else(|| "unknown Megolm session".to_owned())?;
+            .ok_or_else(|| "unknown group session".to_owned())?;
 
         let mut session = unpickle_inbound_group(&data.pickle)?;
 
-        let megolm_msg =
-            MegolmMessage::from_base64(ciphertext).map_err(|e| format!("bad megolm msg: {e}"))?;
-        let result = session
-            .decrypt(&megolm_msg)
-            .map_err(|e| format!("decrypt: {e}"))?;
+        let msg = agora_crypto::group::GroupMessage::from_base64(ciphertext)
+            .map_err(|e| format!("bad msg: {e}"))?;
+        let plaintext_bytes = session.decrypt(&msg).map_err(|e| format!("decrypt: {e}"))?;
 
         if let Some(entry) = self.store.data.inbound_group_sessions.get_mut(&composite) {
             entry.pickle = pickle_inbound_group(&session)?;
         }
-        self.store
-            .save()
-            .map_err(|e| format!("persist megolm state: {e}"))?;
+        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
 
         let plaintext_str =
-            String::from_utf8(result.plaintext).map_err(|e| format!("invalid utf8: {e}"))?;
-        let payload: DecryptedPayload =
-            serde_json::from_str(&plaintext_str).map_err(|e| format!("bad payload json: {e}"))?;
-        Ok(payload)
+            String::from_utf8(plaintext_bytes).map_err(|e| format!("invalid utf8: {e}"))?;
+        serde_json::from_str(&plaintext_str).map_err(|e| format!("bad payload json: {e}"))
     }
 
-    // --- Process to-device events from sync ---
+    // ── To-device event processing ────────────────────────────────────────────
 
     pub fn process_to_device_events(&mut self, events: &[Value]) -> Vec<String> {
         let mut errors = Vec::new();
@@ -553,7 +498,7 @@ impl CryptoMachine {
             match event_type {
                 "m.room.encrypted" => {
                     if let Err(e) = self.handle_encrypted_to_device(sender, &content) {
-                        errors.push(format!("olm decrypt from {sender}: {e}"));
+                        errors.push(format!("pairwise decrypt from {sender}: {e}"));
                     }
                 }
                 "m.room_key" => {
@@ -567,12 +512,13 @@ impl CryptoMachine {
         errors
     }
 
-    fn handle_encrypted_to_device(&mut self, _sender: &str, content: &Value) -> Result<(), String> {
-        let algorithm = content
-            .get("algorithm")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if algorithm != "m.olm.v1.curve25519-aes-sha2" {
+    fn handle_encrypted_to_device(
+        &mut self,
+        _sender: &str,
+        content: &Value,
+    ) -> Result<(), String> {
+        let algorithm = content.get("algorithm").and_then(|v| v.as_str()).unwrap_or("");
+        if algorithm != "m.agora.pairwise.v1" {
             return Err(format!("unsupported algorithm: {algorithm}"));
         }
 
@@ -611,11 +557,8 @@ impl CryptoMachine {
     }
 
     fn handle_room_key(&mut self, content: &Value) -> Result<(), String> {
-        let algorithm = content
-            .get("algorithm")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if algorithm != "m.megolm.v1.aes-sha2" {
+        let algorithm = content.get("algorithm").and_then(|v| v.as_str()).unwrap_or("");
+        if algorithm != "m.agora.group.v1" {
             return Err(format!("unsupported room_key algorithm: {algorithm}"));
         }
 
