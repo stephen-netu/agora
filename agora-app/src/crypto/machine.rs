@@ -7,11 +7,13 @@
 //! with the standard Matrix Olm/Megolm protocols.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use serde_json::Value;
 
 use agora_crypto::account::{Account, AgoraSignature};
 use agora_crypto::group::{GroupSessionKey, InboundGroupSession, OutboundGroupSession};
+use agora_crypto::timestamp::{SequenceTimestamp, TimestampProvider};
 
 use super::sessions::{
     pickle_inbound_group, pickle_outbound_group, pickle_pairwise_session,
@@ -28,6 +30,7 @@ pub struct CryptoMachine {
     pub device_id: String,
     account: Account,
     store: CryptoStore,
+    timestamp: Arc<dyn TimestampProvider>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -64,25 +67,34 @@ pub struct DeviceInfo {
 }
 
 impl CryptoMachine {
-    pub fn new(data_dir: &std::path::Path, user_id: &str, device_id: &str) -> Self {
+    pub fn new(data_dir: &std::path::Path, user_id: &str, device_id: &str) -> Result<Self, String> {
         let store = CryptoStore::open(data_dir, user_id, device_id);
 
         let account = if let Some(ref snap) = store.data.account_pickle {
-            Account::from_snapshot(snap).unwrap_or_else(|_| {
-                Account::generate().unwrap_or_else(|_| Account::from_seed([0u8; 32]))
-            })
+            // Fail loudly on a corrupted pickle: silently falling back to a new
+            // identity would create a second device with a different key under
+            // the same user/device pair, which is a silent key-loss event.
+            Account::from_snapshot(snap)
+                .map_err(|e| format!("account restore failed — store may be corrupted: {e}"))?
         } else {
-            Account::generate().unwrap_or_else(|_| Account::from_seed([0u8; 32]))
+            Account::generate().map_err(|e| format!("account generation failed: {e}"))?
         };
+
+        // S-02: deterministic session timestamps; no SystemTime::now().
+        // Defaults to 2024-03-01 as epoch offset so IDs stay in a sane numeric
+        // range. Replace with SequenceTimestamp::resume_from(offset, last_seq)
+        // once the last sequence is persisted in the store.
+        let timestamp: Arc<dyn TimestampProvider> = Arc::new(SequenceTimestamp::default());
 
         let mut machine = Self {
             user_id: user_id.to_owned(),
             device_id: device_id.to_owned(),
             account,
             store,
+            timestamp,
         };
-        let _ = machine.persist_account();
-        machine
+        machine.persist_account()?;
+        Ok(machine)
     }
 
     fn persist_account(&mut self) -> Result<(), String> {
@@ -241,13 +253,16 @@ impl CryptoMachine {
             },
         );
 
+        let created_at = self
+            .timestamp
+            .next_timestamp()
+            .map_err(|e| format!("timestamp overflow: {e}"))?;
         self.store.data.outbound_group_sessions.insert(
             room_id.to_owned(),
             OutboundGroupSessionData {
                 pickle: pickle_outbound_group(&session)?,
                 session_id,
-                // S-02: no SystemTime::now()
-                created_at: 0,
+                created_at,
                 message_count: 0,
             },
         );
