@@ -6,7 +6,7 @@ use serde_json::Value;
 // S-02: module-level monotonic counter; no SystemTime::now()
 // ARCHITECTURE_PENDING: replace vodozemac (Olm/Megolm) with agora-crypto Double Ratchet +
 // a group-session primitive once agora-crypto gains a Megolm-compatible broadcast ratchet.
-// Tracked: https://github.com/ethee/agora/issues/TBD
+// Tracked: stephen-netu/agora#3 (feat/agora-crypto)
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn next_ts() -> u64 {

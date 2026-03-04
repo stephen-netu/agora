@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agora_core::api::*;
@@ -15,18 +15,47 @@ pub struct AgoraClient {
 }
 
 impl AgoraClient {
+    fn txn_counter_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("agora")
+            .join("txn_counter")
+    }
+
+    fn load_txn_counter() -> u64 {
+        std::fs::read_to_string(Self::txn_counter_path())
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    fn save_txn_counter(value: u64) {
+        let path = Self::txn_counter_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, value.to_string());
+    }
+
     pub fn new(base_url: &str) -> Self {
+        // S-02: resume from persisted counter so txn IDs are unique across CLI
+        // invocations, preventing server-side deduplication from silently
+        // dropping messages sent in separate runs.
+        let last = Self::load_txn_counter();
         Self {
             http: Client::new(),
             base_url: base_url.trim_end_matches('/').to_owned(),
             access_token: None,
-            txn_counter: AtomicU64::new(1),
+            txn_counter: AtomicU64::new(last.saturating_add(1)),
         }
     }
 
     /// Generate a unique, deterministic transaction ID for idempotent Matrix requests.
     fn next_txn_id(&self) -> String {
-        format!("{:016x}", self.txn_counter.fetch_add(1, Ordering::Relaxed))
+        let value = self.txn_counter.fetch_add(1, Ordering::Relaxed);
+        // Persist so the next CLI invocation resumes after this value.
+        Self::save_txn_counter(value);
+        format!("{:016x}", value)
     }
 
     pub fn set_token(&mut self, token: String) {

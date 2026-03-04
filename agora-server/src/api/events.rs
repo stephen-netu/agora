@@ -38,7 +38,7 @@ pub async fn send_event(
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
-    let event_id = EventId::new();
+    let event_id = crate::id_helpers::new_event_id();
     let event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,
@@ -82,7 +82,7 @@ pub async fn redact_event(
 
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
-    let event_id = EventId::new();
+    let event_id = crate::id_helpers::new_event_id();
     let reason = body.get("reason").and_then(|v| v.as_str()).unwrap_or("");
     let redaction_event = RoomEvent {
         event_id: event_id.clone(),
@@ -161,7 +161,7 @@ pub async fn set_state(
     let rid = RoomId::parse(&room_id)
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
-    let event_id = EventId::new();
+    let event_id = crate::id_helpers::new_event_id();
     let event = RoomEvent {
         event_id: event_id.clone(),
         room_id: rid,

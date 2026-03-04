@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use axum::extract::State;
 use axum::Json;
@@ -95,13 +95,13 @@ pub async fn query_keys(
 
     let records = state.store.get_device_keys_for_users(&pairs).await?;
 
-    let mut result: HashMap<String, HashMap<String, DeviceKeysPayload>> = HashMap::new();
+    let mut result: BTreeMap<String, BTreeMap<String, DeviceKeysPayload>> = BTreeMap::new();
     for r in records {
         let algorithms: Vec<String> =
             serde_json::from_str(&r.algorithms_json).unwrap_or_default();
-        let keys: HashMap<String, String> =
+        let keys: BTreeMap<String, String> =
             serde_json::from_str(&r.keys_json).unwrap_or_default();
-        let signatures: HashMap<String, HashMap<String, String>> =
+        let signatures: BTreeMap<String, BTreeMap<String, String>> =
             serde_json::from_str(&r.signatures_json).unwrap_or_default();
 
         let payload = DeviceKeysPayload {
@@ -128,7 +128,7 @@ pub async fn claim_keys(
     AuthUser(_user_id, _): AuthUser,
     Json(body): Json<KeysClaimRequest>,
 ) -> Result<Json<KeysClaimResponse>, ApiError> {
-    let mut result: HashMap<String, HashMap<String, serde_json::Value>> = HashMap::new();
+    let mut result: BTreeMap<String, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
 
     for (uid, devices) in &body.one_time_keys {
         for (did, algorithm) in devices {

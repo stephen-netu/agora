@@ -14,6 +14,7 @@
 mod api;
 mod config;
 mod error;
+mod id_helpers;
 mod state;
 mod store;
 mod sync_engine;

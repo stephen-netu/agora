@@ -23,7 +23,7 @@ pub async fn create_room(
     AuthUser(user_id, _): AuthUser,
     Json(req): Json<CreateRoomRequest>,
 ) -> Result<Json<CreateRoomResponse>, ApiError> {
-    let room_id = RoomId::new(&state.server_name);
+    let room_id = crate::id_helpers::new_room_id(&state.server_name);
     let now = now_millis();
 
     let room_type = req
@@ -62,7 +62,7 @@ pub async fn create_room(
     }
 
     let create_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: crate::id_helpers::new_event_id(),
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::CREATE.to_owned(),
@@ -76,7 +76,7 @@ pub async fn create_room(
 
     // Store m.room.member state event for the creator.
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: crate::id_helpers::new_event_id(),
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
@@ -95,7 +95,7 @@ pub async fn create_room(
     // Optional name state event.
     if let Some(name) = &req.name {
         let name_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: crate::id_helpers::new_event_id(),
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::NAME.to_owned(),
@@ -111,7 +111,7 @@ pub async fn create_room(
     // Optional topic state event.
     if let Some(topic) = &req.topic {
         let topic_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: crate::id_helpers::new_event_id(),
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::TOPIC.to_owned(),
@@ -134,7 +134,7 @@ pub async fn create_room(
             .set_membership(room_id.as_str(), invited_user.as_str(), "invite", invite_ts as i64)
             .await?;
         let invite_event = RoomEvent {
-            event_id: EventId::new(),
+            event_id: crate::id_helpers::new_event_id(),
             room_id: room_id.clone(),
             sender: user_id.clone(),
             event_type: event_type::MEMBER.to_owned(),
@@ -204,7 +204,7 @@ pub async fn join_room(
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: crate::id_helpers::new_event_id(),
         room_id: room_id.clone(),
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
@@ -256,7 +256,7 @@ pub async fn invite_to_room(
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: crate::id_helpers::new_event_id(),
         room_id: rid,
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
@@ -357,7 +357,7 @@ pub async fn leave_room(
         .map_err(|e| ApiError::bad_json(format!("invalid room id: {e}")))?;
 
     let member_event = RoomEvent {
-        event_id: EventId::new(),
+        event_id: crate::id_helpers::new_event_id(),
         room_id: rid,
         sender: user_id.clone(),
         event_type: event_type::MEMBER.to_owned(),
