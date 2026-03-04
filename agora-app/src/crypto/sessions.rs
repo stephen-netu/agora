@@ -1,43 +1,34 @@
-//! Session management helpers for E2EE
+//! Session serialization helpers for E2EE (agora-crypto wrappers).
 
-use vodozemac::megolm::{
-    GroupSession as OutboundGroupSession, GroupSessionPickle, InboundGroupSession,
-    InboundGroupSessionPickle,
-};
-use vodozemac::olm::{Session as OlmSession, SessionPickle};
+use agora_crypto::account::PairwiseSession;
+use agora_crypto::group::{InboundGroupSession, OutboundGroupSession};
 
-/// Pickle an Olm session for storage
-pub fn pickle_olm_session(session: &OlmSession) -> Result<String, String> {
-    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle olm session: {e}"))
-}
-
-/// Unpickle an Olm session from storage
-pub fn unpickle_olm_session(s: &str) -> Result<OlmSession, String> {
-    let pickle: SessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle olm session: {e}"))?;
-    Ok(OlmSession::from_pickle(pickle))
-}
-
-/// Pickle an outbound group session for storage
+/// Serialize an outbound group session.
 pub fn pickle_outbound_group(session: &OutboundGroupSession) -> Result<String, String> {
-    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle outbound group: {e}"))
+    session.to_snapshot().map_err(|e| format!("pickle outbound group: {e}"))
 }
 
-/// Unpickle an outbound group session from storage
+/// Restore an outbound group session.
 pub fn unpickle_outbound_group(s: &str) -> Result<OutboundGroupSession, String> {
-    let pickle: GroupSessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle outbound group: {e}"))?;
-    Ok(OutboundGroupSession::from_pickle(pickle))
+    OutboundGroupSession::from_snapshot(s).map_err(|e| format!("unpickle outbound group: {e}"))
 }
 
-/// Pickle an inbound group session for storage
+/// Serialize an inbound group session.
 pub fn pickle_inbound_group(session: &InboundGroupSession) -> Result<String, String> {
-    serde_json::to_string(&session.pickle()).map_err(|e| format!("pickle inbound group: {e}"))
+    session.to_snapshot().map_err(|e| format!("pickle inbound group: {e}"))
 }
 
-/// Unpickle an inbound group session from storage
+/// Restore an inbound group session.
 pub fn unpickle_inbound_group(s: &str) -> Result<InboundGroupSession, String> {
-    let pickle: InboundGroupSessionPickle =
-        serde_json::from_str(s).map_err(|e| format!("unpickle inbound group: {e}"))?;
-    Ok(InboundGroupSession::from_pickle(pickle))
+    InboundGroupSession::from_snapshot(s).map_err(|e| format!("unpickle inbound group: {e}"))
+}
+
+/// Serialize a pairwise session.
+pub fn pickle_pairwise_session(session: &PairwiseSession) -> Result<String, String> {
+    session.to_snapshot().map_err(|e| format!("pickle pairwise session: {e}"))
+}
+
+/// Restore a pairwise session.
+pub fn unpickle_pairwise_session(s: &str) -> Result<PairwiseSession, String> {
+    PairwiseSession::from_snapshot(s).map_err(|e| format!("unpickle pairwise session: {e}"))
 }
