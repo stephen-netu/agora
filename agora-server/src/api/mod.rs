@@ -11,6 +11,7 @@ pub mod spaces;
 pub mod sync;
 pub mod to_device;
 pub mod typing;
+pub mod user_directory;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -142,6 +143,8 @@ pub fn router(state: AppState) -> Router {
             "/v3/directory/room/{room_alias}",
             get(directory::get_room_alias).put(directory::create_room_alias).delete(directory::delete_room_alias),
         )
+        // User directory
+        .route("/v3/user_directory/search", post(user_directory::search_users))
         // E2EE: Key management
         .route("/v3/keys/upload", post(keys::upload_keys))
         .route("/v3/keys/query", post(keys::query_keys))

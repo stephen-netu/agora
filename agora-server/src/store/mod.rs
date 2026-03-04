@@ -34,6 +34,13 @@ pub struct RoomRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct UserSearchRecord {
+    pub user_id: String,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct RoomMemberRecord {
     #[allow(dead_code)]
     pub room_id: String,
@@ -100,6 +107,11 @@ pub trait Storage: Send + Sync + 'static {
     // -- Users ---------------------------------------------------------------
     async fn create_user(&self, user: &UserRecord) -> Result<(), StorageError>;
     async fn get_user(&self, user_id: &str) -> Result<Option<UserRecord>, StorageError>;
+    async fn search_users(
+        &self,
+        term: &str,
+        limit: u64,
+    ) -> Result<Vec<UserSearchRecord>, StorageError>;
 
     // -- Access tokens -------------------------------------------------------
     async fn create_token(&self, token: &AccessTokenRecord) -> Result<(), StorageError>;

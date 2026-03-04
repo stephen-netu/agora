@@ -8,7 +8,7 @@ use agora_core::identifiers::EventId;
 use super::{
     AccessTokenRecord, DeviceKeysRecord, MediaRecord, OneTimeKeyRecord,
     RoomMemberRecord, RoomRecord, SigchainLinkRecord, Storage, StorageError, ToDeviceRecord,
-    UserRecord,
+    UserRecord, UserSearchRecord,
 };
 
 mod e2ee;
@@ -214,6 +214,14 @@ impl Storage for SqliteStore {
 
     async fn get_user(&self, user_id: &str) -> Result<Option<UserRecord>, StorageError> {
         self.get_user_impl(user_id).await
+    }
+
+    async fn search_users(
+        &self,
+        term: &str,
+        limit: u64,
+    ) -> Result<Vec<UserSearchRecord>, StorageError> {
+        self.search_users_impl(term, limit).await
     }
 
     async fn create_token(&self, token: &AccessTokenRecord) -> Result<(), StorageError> {
