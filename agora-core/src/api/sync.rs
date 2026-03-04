@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::events::RoomEvent;
 
@@ -29,18 +29,18 @@ pub struct SyncResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_device: Option<ToDevicePayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_one_time_keys_count: Option<HashMap<String, u64>>,
+    pub device_one_time_keys_count: Option<BTreeMap<String, u64>>,
 }
 
 /// Room updates in a sync response
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SyncRooms {
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub join: HashMap<String, JoinedRoom>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub invite: HashMap<String, InvitedRoom>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub leave: HashMap<String, Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub join: BTreeMap<String, JoinedRoom>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub invite: BTreeMap<String, InvitedRoom>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub leave: BTreeMap<String, Value>,
 }
 
 /// Joined room data in sync response

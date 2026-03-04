@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -34,7 +34,7 @@ pub fn init_crypto(
 pub fn generate_otks(
     state: State<CryptoState>,
     current_count: u64,
-) -> Result<HashMap<String, Value>, String> {
+) -> Result<BTreeMap<String, Value>, String> {
     let mut guard = state.0.lock().unwrap();
     let machine = guard.as_mut().ok_or("crypto not initialized")?;
     Ok(machine.generate_one_time_keys(current_count))
@@ -43,7 +43,7 @@ pub fn generate_otks(
 #[tauri::command]
 pub fn needs_otk_upload(
     state: State<CryptoState>,
-    server_counts: HashMap<String, u64>,
+    server_counts: BTreeMap<String, u64>,
 ) -> Result<bool, String> {
     let guard = state.0.lock().unwrap();
     let machine = guard.as_ref().ok_or("crypto not initialized")?;

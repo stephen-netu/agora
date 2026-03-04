@@ -1,6 +1,17 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
+
+// S-02: module-level monotonic counter; no SystemTime::now()
+// ARCHITECTURE_PENDING: replace vodozemac (Olm/Megolm) with agora-crypto Double Ratchet +
+// a group-session primitive once agora-crypto gains a Megolm-compatible broadcast ratchet.
+// Tracked: https://github.com/ethee/agora/issues/TBD
+static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_ts() -> u64 {
+    SESSION_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 use vodozemac::megolm::{
     GroupSession as OutboundGroupSession, InboundGroupSession, MegolmMessage, SessionConfig,
     SessionKey,
@@ -108,7 +119,7 @@ impl CryptoMachine {
         let (curve, ed) = self.identity_keys();
         let algorithms = vec!["m.olm.v1.curve25519-aes-sha2", "m.megolm.v1.aes-sha2"];
 
-        let mut keys = HashMap::new();
+        let mut keys = BTreeMap::new();
         keys.insert(format!("curve25519:{}", self.device_id), curve);
         keys.insert(format!("ed25519:{}", self.device_id), ed);
 
@@ -122,8 +133,8 @@ impl CryptoMachine {
         let canonical = serde_json::to_string(&payload).unwrap();
         let signature = self.account.sign(&canonical);
 
-        let mut sigs = HashMap::new();
-        let mut user_sigs = HashMap::new();
+        let mut sigs = BTreeMap::new();
+        let mut user_sigs = BTreeMap::new();
         user_sigs.insert(format!("ed25519:{}", self.device_id), signature.to_base64());
         sigs.insert(self.user_id.clone(), user_sigs);
 
@@ -136,16 +147,16 @@ impl CryptoMachine {
         })
     }
 
-    pub fn generate_one_time_keys(&mut self, server_count: u64) -> HashMap<String, Value> {
+    pub fn generate_one_time_keys(&mut self, server_count: u64) -> BTreeMap<String, Value> {
         let to_generate = MAX_OTK_COUNT.saturating_sub(server_count);
         if to_generate == 0 {
-            return HashMap::new();
+            return BTreeMap::new();
         }
         self.account
             .generate_one_time_keys(to_generate.min(MAX_OTK_COUNT) as usize);
 
         let otks = self.account.one_time_keys();
-        let mut result = HashMap::new();
+        let mut result = BTreeMap::new();
 
         for (key_id, key) in otks.iter() {
             let key_base64 = key.to_base64();
@@ -153,8 +164,8 @@ impl CryptoMachine {
             let canonical = serde_json::to_string(&key_obj).unwrap();
             let signature = self.account.sign(&canonical);
 
-            let mut sigs = HashMap::new();
-            let mut user_sigs = HashMap::new();
+            let mut sigs = BTreeMap::new();
+            let mut user_sigs = BTreeMap::new();
             user_sigs.insert(format!("ed25519:{}", self.device_id), signature.to_base64());
             sigs.insert(self.user_id.clone(), user_sigs);
 
@@ -172,7 +183,7 @@ impl CryptoMachine {
         result
     }
 
-    pub fn needs_more_otks(&self, server_counts: &HashMap<String, u64>) -> bool {
+    pub fn needs_more_otks(&self, server_counts: &BTreeMap<String, u64>) -> bool {
         let current = server_counts.get("signed_curve25519").copied().unwrap_or(0);
         current < OTK_UPLOAD_THRESHOLD
     }
@@ -256,10 +267,8 @@ impl CryptoMachine {
             OutboundGroupSessionData {
                 pickle: pickle_outbound_group(&session)?,
                 session_id,
-                created_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64,
+                // S-02: deterministic timestamp, no SystemTime::now()
+                created_at: next_ts(),
                 message_count: 0,
             },
         );

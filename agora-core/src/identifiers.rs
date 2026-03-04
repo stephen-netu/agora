@@ -48,11 +48,6 @@ impl fmt::Display for UserId {
 pub struct RoomId(String);
 
 impl RoomId {
-    pub fn new(server_name: &str) -> Self {
-        let opaque = uuid::Uuid::new_v4().simple().to_string();
-        Self(format!("!{opaque}:{server_name}"))
-    }
-
     pub fn parse(s: &str) -> Result<Self, IdentifierError> {
         if !s.starts_with('!') || !s.contains(':') {
             return Err(IdentifierError::InvalidFormat {
@@ -80,10 +75,6 @@ impl fmt::Display for RoomId {
 pub struct EventId(String);
 
 impl EventId {
-    pub fn new() -> Self {
-        Self(format!("${}", uuid::Uuid::new_v4().simple()))
-    }
-
     pub fn parse(s: &str) -> Result<Self, IdentifierError> {
         if !s.starts_with('$') {
             return Err(IdentifierError::InvalidFormat {
@@ -96,12 +87,6 @@ impl EventId {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl Default for EventId {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
