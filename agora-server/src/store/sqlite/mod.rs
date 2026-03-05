@@ -483,6 +483,10 @@ impl Storage for SqliteStore {
                 SELECT MAX(created_at)        AS v FROM to_device_messages
                 UNION ALL
                 SELECT MAX(origin_server_ts)  AS v FROM events
+                UNION ALL
+                SELECT MAX(origin_server_ts)  AS v FROM room_members
+                UNION ALL
+                SELECT MAX(created_at)        AS v FROM sigchain_links
             )",
         )
         .fetch_one(&self.pool)

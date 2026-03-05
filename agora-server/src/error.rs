@@ -75,7 +75,12 @@ impl IntoResponse for ApiError {
 impl From<crate::store::StorageError> for ApiError {
     fn from(e: crate::store::StorageError) -> Self {
         tracing::error!("storage error: {e}");
-        ApiError::unknown("internal database error")
+        let msg = if e.to_string().len() > 100 {
+            format!("internal database error: {}", &e.to_string()[..100])
+        } else {
+            format!("internal database error: {}", e)
+        };
+        ApiError::unknown(msg)
     }
 }
 

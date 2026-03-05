@@ -66,7 +66,7 @@ impl Config {
         // Fall back to defaults.
         Ok(Config {
             server: ServerConfig {
-                bind: "127.0.0.1:8008".to_owned(),
+                bind: "0.0.0.0:8008".to_owned(),
                 server_name: "localhost".to_owned(),
             },
             database: DatabaseConfig {

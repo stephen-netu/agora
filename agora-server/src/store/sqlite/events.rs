@@ -9,10 +9,17 @@ impl SqliteStore {
         let content = serde_json::to_string(&event.content)
             .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        let result = sqlx::query(
-            "INSERT INTO events (event_id, room_id, sender, event_type, state_key, content, origin_server_ts)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             RETURNING stream_ordering",
+        let row = sqlx::query("SELECT COALESCE(MAX(stream_ordering), 0) AS max_ord FROM events WHERE room_id = ?")
+            .bind(event.room_id.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        let stream_ordering: i64 = row.get::<i64, _>("max_ord") + 1;
+
+        sqlx::query(
+            "INSERT INTO events (event_id, room_id, sender, event_type, state_key, content, origin_server_ts, stream_ordering)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(event.event_id.as_str())
         .bind(event.room_id.as_str())
@@ -21,11 +28,12 @@ impl SqliteStore {
         .bind(&event.state_key)
         .bind(&content)
         .bind(event.origin_server_ts as i64)
-        .fetch_one(&self.pool)
+        .bind(stream_ordering)
+        .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
 
-        Ok(result.get("stream_ordering"))
+        Ok(stream_ordering)
     }
 
     pub async fn get_events_in_room_impl(
