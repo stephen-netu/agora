@@ -457,8 +457,17 @@ impl AgoraClient {
             .map_err(CliClientError::Http)?;
 
         let result: serde_json::Value = Self::parse_response(resp).await?;
-        let seqno = result["seqno"].as_u64().unwrap_or(0);
-        let hash = result["canonical_hash"].as_str().unwrap_or("").to_owned();
+        let seqno = result["seqno"].as_u64().ok_or_else(|| CliClientError::Server {
+            status: 0,
+            body: "server response missing 'seqno' field".to_owned(),
+        })?;
+        let hash = result["canonical_hash"]
+            .as_str()
+            .ok_or_else(|| CliClientError::Server {
+                status: 0,
+                body: "server response missing 'canonical_hash' field".to_owned(),
+            })?
+            .to_owned();
         Ok((seqno, hash))
     }
 }

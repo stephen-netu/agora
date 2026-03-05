@@ -42,10 +42,17 @@ async function initCryptoAndUploadKeys(userId: string, deviceId: string) {
 			}
 		}
 
-		// Initialise (or restore) the sigchain identity after E2EE is ready.
-		await initSigchain();
 	} catch (e) {
 		console.error('E2EE init failed:', e);
+	}
+
+	// Initialise (or restore) the sigchain identity — kept in a separate
+	// try-catch so a sigchain failure is correctly attributed and does not
+	// suppress or mask an E2EE initialisation error.
+	try {
+		await initSigchain();
+	} catch (e) {
+		console.error('sigchain init failed:', e);
 	}
 }
 

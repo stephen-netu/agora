@@ -93,7 +93,8 @@ impl CryptoMachine {
         let timestamp: Arc<dyn TimestampProvider> = Arc::new(SequenceTimestamp::default());
 
         // Load sigchain identity and chain from store if available.
-        let (identity, chain) = load_sigchain_from_store(&store);
+        let (identity, chain) = load_sigchain_from_store(&store)
+            .map_err(|e| format!("sigchain restore failed — store may be corrupted: {e}"))?;
 
         let mut machine = Self {
             user_id: user_id.to_owned(),
@@ -123,8 +124,13 @@ impl CryptoMachine {
     /// On first call: generates a fresh 32-byte seed via `OsRng`, creates a
     /// genesis link, and persists both to the crypto store.
     pub fn init_sigchain(&mut self) -> Result<(), String> {
-        if self.identity.is_some() {
+        if self.identity.is_some() && self.chain.is_some() {
             return Ok(());
+        }
+        if self.identity.is_some() && self.chain.is_none() {
+            return Err(
+                "sigchain in partial state: identity present but chain missing — store may be corrupted".to_owned()
+            );
         }
 
         // Generate a fresh identity seed.
@@ -226,6 +232,13 @@ impl CryptoMachine {
 
         if correlation_path.len() > 16 {
             return Err("correlation_path exceeds 16-hop limit (S-05)".to_owned());
+        }
+
+        // S-05: enforce loop detection here so callers cannot bypass it.
+        if Sigchain::has_loop(&chain.agent_id, &correlation_path) {
+            return Err(
+                "loop detected: agent_id appears in correlation_path — call append_refusal_link() instead".to_owned()
+            );
         }
 
         let room_id_hash = *blake3::hash(room_id.as_bytes()).as_bytes();
@@ -757,33 +770,51 @@ impl CryptoMachine {
 // ── Sigchain helpers ───────────────────────────────────────────────────────────
 
 /// Attempt to restore the agent sigchain identity and chain from a persisted
-/// `CryptoStore`. Returns `(None, None)` if the store has no sigchain data yet.
-fn load_sigchain_from_store(store: &CryptoStore) -> (Option<AgentIdentity>, Option<Sigchain>) {
+/// `CryptoStore`. Returns `Ok((None, None))` if the store has no sigchain data
+/// yet. Returns `Err` if the store is partially or fully corrupted so the caller
+/// can fail loudly rather than silently accepting invalid state.
+fn load_sigchain_from_store(
+    store: &CryptoStore,
+) -> Result<(Option<AgentIdentity>, Option<Sigchain>), String> {
     let seed_hex = match store.data.identity_seed_hex.as_deref() {
         Some(s) => s,
-        None => return (None, None),
+        None => return Ok((None, None)),
     };
 
-    let seed_bytes = match hex::decode(seed_hex) {
-        Ok(b) => b,
-        Err(_) => return (None, None),
-    };
+    let seed_bytes = hex::decode(seed_hex)
+        .map_err(|_| "identity_seed_hex is not valid hex — store is corrupted".to_owned())?;
 
     if seed_bytes.len() != 32 {
-        return (None, None);
+        return Err("identity_seed has wrong length — store is corrupted".to_owned());
     }
 
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&seed_bytes);
     let identity = AgentIdentity::from_seed(&seed);
 
-    let chain = match store.data.sigchain_json.as_deref() {
-        Some(json) => match serde_json::from_str::<Sigchain>(json) {
-            Ok(c) => c,
-            Err(_) => return (Some(identity), None),
-        },
-        None => return (Some(identity), None),
+    let sigchain_json = match store.data.sigchain_json.as_deref() {
+        Some(j) => j,
+        None => {
+            return Err(
+                "identity present but sigchain missing — store is corrupted".to_owned()
+            )
+        }
     };
 
-    (Some(identity), Some(chain))
+    let chain: Sigchain = serde_json::from_str(sigchain_json)
+        .map_err(|e| format!("sigchain JSON is invalid — store is corrupted: {e}"))?;
+
+    // Full chain integrity check (seqno, hash-links, signatures).
+    chain
+        .verify_chain()
+        .map_err(|e| format!("sigchain integrity check failed: {e}"))?;
+
+    // Identity↔chain consistency: the stored chain must belong to this identity.
+    if chain.agent_id != identity.agent_id {
+        return Err(
+            "identity agent_id does not match sigchain agent_id — store is corrupted".to_owned()
+        );
+    }
+
+    Ok((Some(identity), Some(chain)))
 }
