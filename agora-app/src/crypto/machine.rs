@@ -167,7 +167,10 @@ impl CryptoMachine {
     pub fn has_loop_in_path(&self, correlation_path: &[AgentId]) -> bool {
         match &self.chain {
             Some(chain) => Sigchain::has_loop(&chain.agent_id, correlation_path),
-            None => false,
+            // Fail-closed: if the sigchain isn't initialised and the path is
+            // non-empty, block the action — an uninitialised machine cannot
+            // safely participate in agent-to-agent routing (S-05).
+            None => !correlation_path.is_empty(),
         }
     }
 

@@ -110,6 +110,7 @@ pub trait Storage: Send + Sync + 'static {
     async fn search_users(
         &self,
         term: &str,
+        exclude_user_id: &str,
         limit: u64,
     ) -> Result<Vec<UserSearchRecord>, StorageError>;
 
