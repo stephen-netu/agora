@@ -13,6 +13,7 @@
 //! S-02: timestamps are `chain.len()` (monotonically increasing, no SystemTime).
 //! S-05: no unbounded loops; all operations are O(1) or O(chain_len).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use agora_crypto::{AgentId, AgentIdentity, Sigchain, SigchainBody, SigchainLink};
@@ -96,6 +97,15 @@ impl SigchainManager {
 
         // S-02: timestamp = chain length before append (monotonically increasing).
         let timestamp = self.chain.len() as u64;
+
+        // S-05: enforce loop detection here so callers cannot bypass it.
+        if !correlation_path.is_empty()
+            && Sigchain::has_loop(&self.chain.agent_id, &correlation_path)
+        {
+            return Err(SigchainError::Crypto(
+                "loop detected: agent_id appears in correlation_path — call append_refusal() instead".into(),
+            ));
+        }
 
         // Validate path length (S-05: max 16).
         if correlation_path.len() > 16 {
@@ -187,9 +197,28 @@ fn load_or_generate_seed(data_dir: &Path) -> Result<[u8; 32], SigchainError> {
 
     let mut seed = [0u8; 32];
     OsRng.fill_bytes(&mut seed);
-    std::fs::write(&seed_path, &seed)
+    write_seed_secret(&seed_path, &seed)
         .map_err(|e| SigchainError::Io(format!("write identity_seed: {e}")))?;
     Ok(seed)
+}
+
+/// Write the 32-byte identity seed with owner-only permissions (0o600 on Unix).
+/// Prevents other users on the system from reading the private key material.
+#[cfg(unix)]
+fn write_seed_secret(path: &Path, seed: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(seed)
+}
+
+#[cfg(not(unix))]
+fn write_seed_secret(path: &Path, seed: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, seed)
 }
 
 fn load_or_create_chain(data_dir: &Path, identity: &AgentIdentity) -> Result<Sigchain, SigchainError> {
@@ -198,6 +227,19 @@ fn load_or_create_chain(data_dir: &Path, identity: &AgentIdentity) -> Result<Sig
     if let Ok(data) = std::fs::read_to_string(&chain_path) {
         let chain: Sigchain = serde_json::from_str(&data)
             .map_err(|e| SigchainError::Io(format!("parse sigchain.json: {e}")))?;
+
+        // Full chain integrity verification (seqno, hash-links, signatures).
+        chain
+            .verify_chain()
+            .map_err(|e| SigchainError::Crypto(format!("sigchain integrity check failed: {e}")))?;
+
+        // Identity↔chain consistency.
+        if chain.agent_id != identity.agent_id {
+            return Err(SigchainError::Crypto(
+                "identity agent_id does not match sigchain agent_id — store is corrupted".into(),
+            ));
+        }
+
         return Ok(chain);
     }
 

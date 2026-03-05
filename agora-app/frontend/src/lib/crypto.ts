@@ -216,7 +216,9 @@ export async function checkSigchainLoop(correlationPath: string[]): Promise<bool
 	try {
 		return (await tauriInvoke('check_sigchain_loop', { correlationPath })) as boolean;
 	} catch {
-		return false;
+		// Fail closed: treat any exception as loop-detected (S-05).
+		// An open failure here would allow infinite agent-to-agent routing loops.
+		return true;
 	}
 }
 

@@ -1,4 +1,5 @@
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::Json;
 
 use crate::api::AuthUser;
@@ -39,18 +40,38 @@ pub async fn search_users(
     AuthUser(_user_id, _): AuthUser,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    let limit = req.limit.min(MAX_LIMIT);
+    let search_term = req.search_term.trim().to_owned();
+    if search_term.len() < 2 {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "M_INVALID_PARAM",
+            "search_term must be at least 2 characters",
+        ));
+    }
+    if search_term.len() > 128 {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "M_INVALID_PARAM",
+            "search_term must not exceed 128 characters",
+        ));
+    }
+
+    // Clamp limit to [1, MAX_LIMIT]. Over-fetch by 1 so we can accurately
+    // report `limited` without a separate COUNT query.
+    let limit = req.limit.clamp(1, MAX_LIMIT);
+    let fetch_limit = limit + 1;
 
     let records = state
         .store
-        .search_users(&req.search_term, limit)
+        .search_users(&search_term, fetch_limit)
         .await
         .map_err(|e| ApiError::unknown(format!("user search failed: {e}")))?;
 
-    let limited = records.len() as u64 == limit;
+    let limited = records.len() as u64 > limit;
 
     let results = records
         .into_iter()
+        .take(limit as usize)
         .map(|r| UserResult {
             user_id: r.user_id,
             display_name: r.display_name,
