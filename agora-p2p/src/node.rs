@@ -10,11 +10,13 @@ use crate::types::Config;
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
 use crate::discovery::mdns::{MdnsDiscovery, MdnsPeerEvent};
 use crate::protocol::{AmpMessage, SerializedEvent};
+use crate::mesh::peer::MeshManager;
 
 pub struct P2pNode {
     config: Config,
     transport: Arc<QuicTransport>,
     discovery: Arc<RwLock<Option<MdnsDiscovery>>>,
+    mesh: Arc<MeshManager>,
     mesh_events_tx: mpsc::Sender<MeshEvent>,
 }
 
@@ -37,10 +39,19 @@ impl P2pNode {
         
         let (mesh_events_tx, _mesh_events_rx) = mpsc::channel(100);
         
+        let (mesh_internal_tx, _mesh_internal_rx) = mpsc::channel(100);
+        
+        let mesh = Arc::new(MeshManager::new(
+            config.agent_id.clone(),
+            transport.clone(),
+            mesh_internal_tx,
+        ));
+        
         Ok(Self {
             config,
             transport,
             discovery: Arc::new(RwLock::new(None)),
+            mesh,
             mesh_events_tx,
         })
     }
@@ -133,10 +144,16 @@ impl P2pNode {
             }],
         };
         
-        let encoded = crate::protocol::encode(&msg)
-            .map_err(|e| Error::Protocol(e.to_string()))?;
+        let peers = self.mesh.connected_peers().await;
+        let peer_count = peers.len();
         
-        info!("Broadcasting message to room {} ({} bytes)", room_id, encoded.len());
+        for peer_id in peers {
+            if let Err(e) = self.mesh.send_to(&peer_id, msg.clone()).await {
+                info!("Failed to send message to peer {}: {}", peer_id, e);
+            }
+        }
+        
+        info!("Broadcasting message to room {} ({} peers)", room_id, peer_count);
         
         Ok(())
     }
