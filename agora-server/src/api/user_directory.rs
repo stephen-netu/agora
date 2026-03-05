@@ -41,14 +41,15 @@ pub async fn search_users(
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let search_term = req.search_term.trim().to_owned();
-    if search_term.len() < 2 {
+    let term_chars = search_term.chars().count();
+    if term_chars < 2 {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "M_INVALID_PARAM",
             "search_term must be at least 2 characters",
         ));
     }
-    if search_term.len() > 128 {
+    if term_chars > 128 {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "M_INVALID_PARAM",

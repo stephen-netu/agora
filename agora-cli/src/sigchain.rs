@@ -186,18 +186,21 @@ impl SigchainManager {
 fn load_or_generate_seed(data_dir: &Path) -> Result<[u8; 32], SigchainError> {
     let seed_path = data_dir.join("identity_seed");
 
-    if let Ok(data) = std::fs::read(&seed_path) {
-        if data.len() == 32 {
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(&data);
-            return Ok(arr);
+    match std::fs::read(&seed_path) {
+        Ok(data) => {
+            if data.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&data);
+                return Ok(arr);
+            }
+            // Wrong length — truncation or corruption. Fail loudly; silently
+            // regenerating would create a new identity and lose chain history.
+            return Err(SigchainError::Io(
+                "identity_seed has wrong length — file may be corrupted; remove it manually to regenerate".into(),
+            ));
         }
-        // Wrong length means truncation or corruption — fail loudly.
-        // Silently regenerating would create a new identity and silently lose
-        // any previously signed chain data, which is unacceptable.
-        return Err(SigchainError::Io(
-            "identity_seed has wrong length — file may be corrupted; remove it manually to regenerate".into(),
-        ));
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(SigchainError::Io(format!("read identity_seed: {e}"))),
     }
 
     let mut seed = [0u8; 32];
@@ -229,33 +232,38 @@ fn write_seed_secret(path: &Path, seed: &[u8]) -> std::io::Result<()> {
 fn load_or_create_chain(data_dir: &Path, identity: &AgentIdentity) -> Result<Sigchain, SigchainError> {
     let chain_path = data_dir.join("sigchain.json");
 
-    if let Ok(data) = std::fs::read_to_string(&chain_path) {
-        let chain: Sigchain = serde_json::from_str(&data)
-            .map_err(|e| SigchainError::Io(format!("parse sigchain.json: {e}")))?;
+    match std::fs::read_to_string(&chain_path) {
+        Ok(data) => {
+            let chain: Sigchain = serde_json::from_str(&data)
+                .map_err(|e| SigchainError::Io(format!("parse sigchain.json: {e}")))?;
 
-        // Full chain integrity verification (seqno, hash-links, signatures).
-        chain
-            .verify_chain()
-            .map_err(|e| SigchainError::Crypto(format!("sigchain integrity check failed: {e}")))?;
+            // Full chain integrity verification (seqno, hash-links, signatures).
+            chain
+                .verify_chain()
+                .map_err(|e| SigchainError::Crypto(format!("sigchain integrity check failed: {e}")))?;
 
-        // Identity↔chain consistency.
-        if chain.agent_id != identity.agent_id {
-            return Err(SigchainError::Crypto(
-                "identity agent_id does not match sigchain agent_id — store is corrupted".into(),
-            ));
+            // Identity↔chain consistency.
+            if chain.agent_id != identity.agent_id {
+                return Err(SigchainError::Crypto(
+                    "identity agent_id does not match sigchain agent_id — store is corrupted".into(),
+                ));
+            }
+
+            Ok(chain)
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // First run: create genesis chain and persist it.
+            let chain = Sigchain::genesis(identity, vec![], None)
+                .map_err(|e| SigchainError::Crypto(format!("genesis: {e}")))?;
 
-        return Ok(chain);
+            let json = serde_json::to_string_pretty(&chain)
+                .map_err(|e| SigchainError::Io(format!("serialize genesis: {e}")))?;
+            std::fs::write(&chain_path, json)
+                .map_err(|e| SigchainError::Io(format!("write genesis: {e}")))?;
+
+            Ok(chain)
+        }
+        // Any other I/O error (permissions, device error, etc.) is fatal.
+        Err(e) => Err(SigchainError::Io(format!("read sigchain.json: {e}"))),
     }
-
-    // First run: create genesis.
-    let chain = Sigchain::genesis(identity, vec![], None)
-        .map_err(|e| SigchainError::Crypto(format!("genesis: {e}")))?;
-
-    let json = serde_json::to_string_pretty(&chain)
-        .map_err(|e| SigchainError::Io(format!("serialize genesis: {e}")))?;
-    std::fs::write(&chain_path, json)
-        .map_err(|e| SigchainError::Io(format!("write genesis: {e}")))?;
-
-    Ok(chain)
 }

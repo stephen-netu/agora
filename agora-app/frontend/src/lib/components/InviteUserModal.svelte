@@ -25,6 +25,7 @@
 		if (searchTimer) clearTimeout(searchTimer);
 		if (term.length < 2) {
 			searchResults = [];
+			searching = false;
 			return;
 		}
 		searchTimer = setTimeout(async () => {
@@ -44,6 +45,7 @@
 
 	$effect(() => {
 		return () => {
+			if (searchTimer) clearTimeout(searchTimer);
 			if (closeTimer) clearTimeout(closeTimer);
 		};
 	});

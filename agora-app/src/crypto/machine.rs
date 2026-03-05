@@ -781,7 +781,15 @@ fn load_sigchain_from_store(
 ) -> Result<(Option<AgentIdentity>, Option<Sigchain>), String> {
     let seed_hex = match store.data.identity_seed_hex.as_deref() {
         Some(s) => s,
-        None => return Ok((None, None)),
+        None => {
+            // Inverse partial state: chain persisted but seed is gone.
+            if store.data.sigchain_json.is_some() {
+                return Err(
+                    "sigchain present but identity_seed missing — store is corrupted".to_owned()
+                );
+            }
+            return Ok((None, None));
+        }
     };
 
     let seed_bytes = hex::decode(seed_hex)
