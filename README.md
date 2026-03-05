@@ -37,7 +37,7 @@ Copy `config.example.toml` to `agora.toml` and edit as needed:
 
 ```toml
 [server]
-bind = "127.0.0.1:8008"
+bind = "0.0.0.0:8008"
 server_name = "localhost"
 
 [database]
