@@ -40,6 +40,8 @@ impl std::fmt::Display for SigchainError {
     }
 }
 
+impl std::error::Error for SigchainError {}
+
 impl SigchainManager {
     /// Open or create the sigchain manager for the given config directory.
     ///
@@ -99,9 +101,8 @@ impl SigchainManager {
         let timestamp = self.chain.len() as u64;
 
         // S-05: enforce loop detection here so callers cannot bypass it.
-        if !correlation_path.is_empty()
-            && Sigchain::has_loop(&self.chain.agent_id, &correlation_path)
-        {
+        // has_loop() returns false on an empty path, so no guard needed.
+        if Sigchain::has_loop(&self.chain.agent_id, &correlation_path) {
             return Err(SigchainError::Crypto(
                 "loop detected: agent_id appears in correlation_path — call append_refusal() instead".into(),
             ));
