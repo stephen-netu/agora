@@ -34,3 +34,7 @@ mdns-sd = "0.12"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[[example]]
+name = "p2p_chat"
+path = "examples/p2p_chat.rs"
