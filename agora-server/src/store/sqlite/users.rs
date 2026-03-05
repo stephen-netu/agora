@@ -139,10 +139,16 @@ impl SqliteStore {
         exclude_user_id: &str,
         limit: u64,
     ) -> Result<Vec<UserSearchRecord>, StorageError> {
-        let pattern = format!("%{}%", term);
+        // Escape LIKE metacharacters so user input cannot inject wildcards.
+        let escaped = term
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{}%", escaped);
         let rows = sqlx::query(
             "SELECT user_id, display_name, avatar_url FROM users \
-             WHERE (user_id LIKE ?1 OR display_name LIKE ?1) AND user_id != ?2 \
+             WHERE (user_id LIKE ?1 ESCAPE '\\' OR display_name LIKE ?1 ESCAPE '\\') \
+             AND user_id != ?2 \
              LIMIT ?3",
         )
         .bind(&pattern)

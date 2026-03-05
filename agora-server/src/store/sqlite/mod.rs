@@ -171,7 +171,17 @@ impl SqliteStore {
 
         for sql in &alter_statements {
             if let Err(e) = sqlx::query(sql).execute(&self.pool).await {
-                tracing::warn!(error = %e, sql = %sql, "migration step failed (may be already applied)");
+                let msg = e.to_string();
+                // Suppress only the "duplicate column name" error, which means
+                // the migration was already applied on a previous startup.
+                // All other ALTER failures are fatal — the schema is required.
+                if msg.contains("duplicate column name") {
+                    tracing::debug!(sql = %sql, "migration step already applied, skipping");
+                } else {
+                    return Err(StorageError::Database(format!(
+                        "migration failed for `{sql}`: {e}"
+                    )));
+                }
             }
         }
 
