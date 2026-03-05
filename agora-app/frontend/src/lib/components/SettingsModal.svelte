@@ -40,7 +40,7 @@
 	<div class="modal" onclick={(e) => e.stopPropagation()} role="document">
 		<div class="modal-header">
 			<h3>Settings</h3>
-			<button class="close-btn" onclick={onClose}>&times;</button>
+			<button class="close-btn" onclick={onClose} aria-label="Close settings">&times;</button>
 		</div>
 
 		<div class="modal-body">
