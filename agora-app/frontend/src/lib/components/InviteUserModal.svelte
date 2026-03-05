@@ -87,7 +87,7 @@
 	<div class="modal" onclick={(e) => e.stopPropagation()} role="document">
 		<div class="modal-header">
 			<h3>Invite User</h3>
-			<button class="close-btn" onclick={onClose}>&times;</button>
+			<button class="close-btn" onclick={onClose} aria-label="Close invite dialog">&times;</button>
 		</div>
 
 		{#if success}

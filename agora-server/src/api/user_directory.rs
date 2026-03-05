@@ -64,7 +64,7 @@ pub async fn search_users(
 
     let records = state
         .store
-        .search_users(&search_term, &user_id, fetch_limit)
+        .search_users(&search_term, user_id.as_str(), fetch_limit)
         .await
         .map_err(|e| ApiError::unknown(format!("user search failed: {e}")))?;
 
