@@ -7,10 +7,11 @@
 - [x] Migrate E2E from vodozemac to agora-crypto (custom Double Ratchet + X3DH)
 - [x] Replace UUID IDs with BLAKE3 content-addressed IDs (S-02 compliance)
 - [x] Replace HashMap with BTreeMap throughout (deterministic ordering)
-- [x] Persist sequence timestamps across server restarts (no token collision on reboot)
+- [x] Persist sequence timestamps across server restarts (no token collision on reboot) — FIXED: was broken due to missing room_members and sigchain_links in query
 - [x] Server-side token secret: generated on first boot, persisted to disk
 - [x] CLI transaction counter persistence (no duplicate-event drops across invocations)
 - [x] Tighten up Matrix protocol compliance
+- [x] Room creation — FIXED: stream_ordering NOT NULL constraint bug
 
 ### Messaging & Rooms
 - [x] Pin (& unpin) messages
@@ -50,6 +51,8 @@
 
 ## Dogfood Launch Blockers
 
+- [x] Room creation — FIXED: stream_ordering NOT NULL constraint not being met
+- [x] Timestamp sequence persistence — FIXED: sequence wasn't resuming after server restarts (missing room_members and sigchain_links in query)
 - [ ] Verify image rendering works end-to-end in encrypted and unencrypted rooms
 - [ ] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
 
@@ -57,6 +60,7 @@
 
 ## Immediate / Near-Term
 
+- [ ] End-to-end testing of core flows: room creation, invites, messaging, file uploads
 - [ ] Emoji reactions — Discord-style, per-message
 - [ ] User avatar upload & display, viewable profile on username click
 - [ ] User status (online / idle / away / custom) with presence indicators

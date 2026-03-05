@@ -2,11 +2,13 @@
 
 ## Current State
 
-Agora is a self-hosted, privacy-first communications platform implementing a substantial subset of the Matrix Client-Server API (v1.11). The server runs as a single binary with SQLite storage. All three clients (desktop app, web frontend via Tauri, interactive TUI) are fully operational.
+Agora is a self-hosted, privacy-first communications platform implementing a substantial subset of the Matrix Client-Server API (v1.11). The server runs as a single binary with SQLite storage. The core infrastructure is in place and all three clients (desktop app, web frontend via Tauri, interactive TUI) can run — recent fixes addressed critical bugs in room creation and event ordering that were blocking practical use.
 
 ### What ships today
 
 **Protocol**: Authentication, rooms, spaces, messaging, file media upload/download, E2E encryption, profiles, typing indicators, devices, room directory, user directory search, pinned messages, room invitations (send and receive), room deletion, space hierarchy.
+
+> **Note**: Room creation and event streaming had critical bugs (stream_ordering, timestamp sequence) that were recently fixed. The protocol implementation is functional but still maturing — some edge cases may surface during heavier usage.
 
 **Cryptography** (`agora-crypto`): Built on audited primitives — X25519, Ed25519, ChaCha20-Poly1305, BLAKE3, HKDF. All IDs are BLAKE3 content-addressed; timestamps are deterministic sequence counters that survive restarts without collision. E2E uses Signal-spec Double Ratchet + X3DH (`m.agora.pairwise.v1`) and sender-key group sessions (`m.agora.group.v1`). These are internal algorithm identifiers — encrypted rooms are only readable by Agora clients, not Element or other standard Matrix clients.
 
@@ -577,7 +579,7 @@ Features beyond Matrix compatibility — Agora-specific enhancements on the near
 
 ## Feature Priorities
 
-1. **Immediate** — Dogfood blockers: image rendering verification, E2E limitation documentation
+1. **Immediate** — Dogfood blockers: room creation fixes (stream_ordering, timestamp sequence) just landed, image rendering verification, E2E limitation documentation
 2. **High** — AMP Phase 1 (LAN mesh, zero-server local), read receipts, moderation, account data
 3. **Medium** — AMP Phase 2 (identity sovereignty), presence, emoji reactions, user profiles/avatars, E2E enhancements
 4. **Low** — AMP Phase 3+ (internet P2P, DAG, relay), Matrix federation, push notifications, SSO, full-text search
