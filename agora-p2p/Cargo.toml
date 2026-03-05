@@ -1,0 +1,36 @@
+[package]
+name = "agora-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agora-core = { workspace = true }
+agora-crypto = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+ciborium = "0.2"
+
+# QUIC transport
+quinn = "0.11"
+
+# TLS
+rustls = { version = "0.23", features = ["ring"] }
+rcgen = "0.13"
+blake3 = "1"
+
+# Utilities
+futures = "0.3"
+bytes = "1"
+pin-project-lite = "0.2"
+rand = "0.8"
+
+# mDNS discovery
+mdns-sd = "0.12"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

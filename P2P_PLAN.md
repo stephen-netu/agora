@@ -30,11 +30,30 @@ let quinn_server_config = QuinnServerConfig::with_crypto(Arc::new(rustls_config)
 
 **Problem**: Using `dangerous() with_custom_certificate_verifier(InsecureVerifier)` accepts any certificate, which is insecure even for local networks.
 
-**Solution**: Implement fingerprint-based certificate verification:
+**Solution**: Implement fingerprint-based certificate verification with AgentId binding:
 
 ```rust
 pub struct FingerprintVerifier {
+    // FIXED: Map AgentId -> Fingerprint for bound verification
     trusted_fingerprints: Arc<RwLock<HashMap<AgentId, [u8; 32]>>>,
+}
+
+impl FingerprintVerifier {
+    pub fn new() -> Self {
+        Self {
+            trusted_fingerprints: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    // Register expected fingerprint for a specific agent
+    pub async fn register_agent(&self, agent_id: AgentId, fingerprint: [u8; 32]) {
+        self.trusted_fingerprints.write().await.insert(agent_id, fingerprint);
+    }
+    
+    // Get fingerprint to verify against during handshake (after agent_id is known)
+    pub async fn get_expected_fingerprint(&self, agent_id: &AgentId) -> Option<[u8; 32]> {
+        self.trusted_fingerprints.read().await.get(agent_id).copied()
+    }
 }
 
 impl ServerCertVerifier for FingerprintVerifier {
@@ -46,22 +65,31 @@ impl ServerCertVerifier for FingerprintVerifier {
         _dns_names: &[&str],
         _ip_addrs: &[IpAddr],
     ) -> Result<ServerCertVerified, rustls::Error> {
+        // Extract certificate fingerprint = blake3(public_key)
         let cert_fingerprint = blake3::hash(end_entity.as_ref()).into();
         
-        // Check against trusted fingerprints (populated during mDNS discovery)
-        let trusted = self.trusted_fingerprints.read().unwrap();
-        for (_agent_id, fp) in trusted.iter() {
-            if fp == &cert_fingerprint {
-                return Ok(ServerCertVerified::assertion());
-            }
-        }
+        // Store fingerprint for later verification after handshake reveals agent_id
+        // The actual agent_id binding happens during handshake verification
+        self.pending_fingerprints.write().await.insert(cert_fingerprint, Instant::now());
         
-        Err(rustls::Error::General("Untrusted certificate".into()))
+        Ok(ServerCertVerified::assertion())
     }
 }
 
-// Certificate fingerprint = hash(public_key)
-// Verify fingerprint matches expected AgentId during handshake
+// IMPROVED ARCHITECTURE: AgentId = blake3(public_key)
+// This makes fingerprint verification trivial!
+
+/*
+ * Verification flow:
+ * 
+ * 1. TLS handshake completes
+ * 2. Extract certificate fingerprint = blake3(public_key)
+ * 3. Handshake message sends agent_id
+ * 4. Verify: blake3(public_key) == AgentId  (trivial equality check!)
+ * 
+ * This eliminates the need for explicit fingerprint mapping.
+ * The certificate's public key hash IS the AgentId.
+ */
 ```
 
 ### 3. mDNS Removal Logic Fix
@@ -74,8 +102,14 @@ impl ServerCertVerifier for FingerprintVerifier {
 pub struct DiscoveryManager {
     mdns: MdnsDiscovery,
     peers: HashMap<AgentId, PeerInfo>,
-    service_to_agent: HashMap<String, AgentId>,  // NEW: track service instance → agent_id
+    service_to_agent: HashMap<String, AgentId>,  // Track service instance → agent_id
     event_receiver: Option<Receiver<ServiceEvent>>,
+}
+
+pub struct PeerInfo {
+    pub agent_id: AgentId,
+    pub addr: SocketAddr,
+    pub last_seen: std::time::Instant,
 }
 
 impl DiscoveryManager {
@@ -104,11 +138,63 @@ impl DiscoveryManager {
 }
 ```
 
+**Additional Improvement**: mDNS instance names are **NOT guaranteed unique across restarts**. Track full mapping including address to avoid stale removal events removing wrong peer:
+
+```rust
+pub struct DiscoveryManager {
+    mdns: MdnsDiscovery,
+    peers: HashMap<AgentId, PeerInfo>,
+    // IMPROVED: Track service_instance -> (agent_id, addr) to handle restarts
+    service_instances: HashMap<String, (AgentId, SocketAddr)>,
+    event_receiver: Option<Receiver<ServiceEvent>>,
+}
+
+impl DiscoveryManager {
+    pub async fn handle_events(&mut self) {
+        loop {
+            match receiver.recv().await {
+                Ok(ServiceEvent::ServiceResolved(info)) => {
+                    let addr = SocketAddr::new(
+                        info.get_addresses()[0],
+                        info.get_port(),
+                    );
+                    
+                    if let Some(agent_id_str) = info.get_property_val_str("agent_id") {
+                        if let Ok(agent_id) = AgentId::from_hex(agent_id_str) {
+                            let instance_name = info.get_fullname().to_string();
+                            
+                            // Update mapping: service_instance -> (agent_id, addr)
+                            self.service_instances.insert(instance_name, (agent_id.clone(), addr));
+                            
+                            // Update or insert peer
+                            self.peers.insert(agent_id.clone(), PeerInfo {
+                                agent_id,
+                                addr,
+                                last_seen: std::time::Instant::now(),
+                            });
+                        }
+                    }
+                }
+                Ok(ServiceEvent::ServiceRemoved(_, fullname)) => {
+                    // Look up by service instance name - may have updated agent_id
+                    if let Some((agent_id, _addr)) = self.service_instances.get(&fullname) {
+                        self.peers.remove(agent_id);
+                        self.service_instances.remove(&fullname);
+                    }
+                }
+                Ok(_) => {}
+                Err(mpsc::error::RecvError) => break,
+            }
+        }
+    }
+}
+```
+
 ### 4. Peer Connection Race Condition Fix
 
 **Problem**: When two peers discover each other via mDNS, both may attempt to connect simultaneously, resulting in duplicate connections and wasted resources.
 
-**Solution**: Add deterministic initiator rule based on AgentId comparison:
+**Solution**: Add deterministic initiator rule based on AgentId comparison and collapse duplicates:
 
 ```rust
 impl PeerManager {
@@ -121,6 +207,47 @@ impl PeerManager {
             }
         }
         // Otherwise, wait for incoming connection from peer
+    }
+}
+
+// DUPLICATE CONNECTION COLLAPSE:
+// Even with deterministic initiator rule, may temporarily get both incoming + outgoing connection
+// Add logic to collapse duplicates
+
+impl PeerManager {
+    pub async fn handle_incoming_connection(&self, conn: Connection, remote_agent_id: AgentId) {
+        let mut connections = self.connections.write().await;
+        
+        // Check if we already have a connection to this peer
+        if let Some(existing) = connections.get(&remote_agent_id) {
+            // Determine which connection to keep using initiator rule
+            // We are the responder in this case
+            let we_should_keep = self.local_agent_id < remote_agent_id;
+            
+            if we_should_keep {
+                // We're the designated initiator, keep incoming, close outgoing if exists
+                tracing::debug!("Keeping incoming connection from {} (we are initiator)", remote_agent_id);
+                // Note: outgoing connection would be closed by its owner when it sees this connection
+                connections.insert(remote_agent_id.clone(), PeerConnection {
+                    agent_id: remote_agent_id,
+                    connection: conn,
+                    connected_at: std::time::Instant::now(),
+                });
+            } else {
+                // We're not the initiator, reject this incoming connection
+                tracing::debug!("Rejecting incoming from {} (peer is initiator)", remote_agent_id);
+                // Close the incoming connection - peer should have outgoing
+                conn.close(0u8.into(), b"not initiator");
+                return;
+            }
+        } else {
+            // No existing connection, insert new one
+            connections.insert(remote_agent_id.clone(), PeerConnection {
+                agent_id: remote_agent_id,
+                connection: conn,
+                connected_at: std::time::Instant::now(),
+            });
+        }
     }
 }
 
@@ -161,24 +288,7 @@ impl MessageCodec {
         Ok(frame)
     }
     
-    pub fn decode_frame(data: &[u8]) -> Result<P2pMessage, ProtocolError> {
-        if data.len() < 4 {
-            return Err(ProtocolError::Decoding("Frame too short".into()));
-        }
-        
-        let length = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        
-        if data.len() < 4 + length {
-            return Err(ProtocolError::Decoding("Incomplete frame".into()));
-        }
-        
-        let message_bytes = &data[4..4 + length];
-        
-        ciborium::de::from_reader(message_bytes)
-            .map_err(|e| ProtocolError::Decoding(e.to_string()))
-    }
-    
-    // For reading from stream - may need multiple reads for complete message
+    // CORRECT: Read length prefix first, then read that many bytes, then deserialize
     pub async fn read_message(recv: &mut RecvStream) -> Result<P2pMessage, ProtocolError> {
         let mut length_buf = [0u8; 4];
         recv.read_exact(&mut length_buf).await?;
@@ -187,7 +297,9 @@ impl MessageCodec {
         let mut buffer = vec![0u8; length];
         recv.read_exact(&mut buffer).await?;
         
-        Self::decode_frame(&buffer)
+        // Deserialize directly from buffer (no length prefix in buffer)
+        ciborium::de::from_reader(&buffer[..])
+            .map_err(|e| ProtocolError::Decoding(e.to_string()))
     }
 }
 ```
@@ -233,7 +345,8 @@ pub enum P2pMessage {
         version: String,
         // NEW: Add public key and signature for authentication
         public_key: [u8; 32],
-        signature: Vec<u8>,  // Sign(handshake_challenge, private_key)
+        signature: Vec<u8>,  // IMPROVED: Sign(transcript_hash + nonce)
+        nonce: u64,          // For replay protection
     },
     // ... existing messages
 }
@@ -245,21 +358,74 @@ impl PeerManager {
         remote_agent_id: AgentId,
         remote_public_key: [u8; 32],
         signature: &[u8],
+        nonce: u64,
     ) -> Result<(), P2pError> {
-        // Verify signature over challenge (challenge = conn_id + remote_agent_id)
+        // IMPROVED: Use transcript_hash instead of simple conn_id + agent_id
+        // Standard pattern:
+        //   ed25519_sign(
+        //       blake3(
+        //           tls_session_id
+        //           + agent_id
+        //           + public_key
+        //       )
+        //   )
+        
+        // Get TLS session ID for the transcript
+        let tls_session_id = conn.peer_certificate()
+            .ok_or(P2pError::Auth("No peer certificate".into()))?;
+        
+        // Build challenge: blake3(tls_session_id + agent_id + public_key + nonce)
+        use blake3::Hasher;
+        let mut hasher = Hasher::new();
+        hasher.update(tls_session_id.as_ref());
+        hasher.update(remote_agent_id.as_bytes());
+        hasher.update(&remote_public_key);
+        hasher.update(&nonce.to_be_bytes());
+        let challenge_hash = hasher.finalize();
+        
+        // Verify signature over challenge
         use ed25519_dalek::Verifier;
         
         let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&remote_public_key)
             .map_err(|_| P2pError::Auth("Invalid public key".into()))?;
         
-        // Verify signature is valid
-        let _signature = ed25519_dalek::Signature::from_slice(signature)
+        let ed_signature = ed25519_dalek::Signature::from_slice(signature)
             .map_err(|_| P2pError::Auth("Invalid signature format".into()))?;
         
-        // For initial trust, verify public key matches certificate fingerprint
-        // In production, use sigchain for transitive trust
+        verifying_key.verify(challenge_hash.as_bytes(), &ed_signature)
+            .map_err(|_| P2pError::Auth("Signature verification failed".into()))?;
+        
+        // IMPROVED ARCHITECTURE: Verify AgentId = blake3(public_key)
+        // If AgentId is derived from public key, verification is trivial
+        let expected_agent_id = AgentId::from_bytes(blake3::hash(&remote_public_key).as_bytes());
+        if remote_agent_id != expected_agent_id {
+            return Err(P2pError::Auth("AgentId doesn't match public key".into()));
+        }
+        
+        // Check nonce for replay protection (store recent nonces)
+        if self.is_nonce_used(nonce).await {
+            return Err(P2pError::Auth("Nonce replay detected".into()));
+        }
+        self.mark_nonce_used(nonce).await;
         
         Ok(())
+    }
+    
+    // Nonce tracking for replay protection
+    async fn is_nonce_used(&self, nonce: u64) -> bool {
+        let nonces = self.used_nonces.read().await;
+        nonces.contains(&nonce)
+    }
+    
+    async fn mark_nonce_used(&self, nonce: u64) {
+        let mut nonces = self.used_nonces.write().await;
+        nonces.insert(nonce);
+        // Keep only recent nonces (last 1000)
+        while nonces.len() > 1000 {
+            if let Some(min) = nonces.iter().min().copied() {
+                nonces.remove(&min);
+            }
+        }
     }
 }
 ```
@@ -277,6 +443,32 @@ pub struct PeerConnection {
     pub consecutive_failures: u32,
 }
 
+// IMPROVED: Use BOTH QUIC built-in keepalive AND application pings
+
+pub fn create_quic_server_config() -> ServerConfig {
+    let mut transport_config = TransportConfig::default();
+    
+    // QUIC built-in keepalive for transport-level health
+    transport_config.keep_alive_interval(Some(Duration::from_secs(15)));
+    
+    let mut server_config = ServerConfig::with_crypto(Arc::new(rustls_config));
+    server_config.transport_config(Arc::new(transport_config));
+    
+    server_config
+}
+
+pub fn create_quic_client_config() -> ClientConfig {
+    let mut transport_config = TransportConfig::default();
+    
+    // QUIC built-in keepalive for transport-level health
+    transport_config.keep_alive_interval(Some(Duration::from_secs(15)));
+    
+    let mut client_config = ClientConfig::new(Arc::new(rustls_config));
+    client_config.transport_config(Arc::new(transport_config));
+    
+    client_config
+}
+
 impl PeerManager {
     pub async fn start_health_checker(&self) {
         let connections = self.connections.clone();
@@ -287,12 +479,15 @@ impl PeerManager {
                 
                 let mut conns = connections.write().await;
                 for (agent_id, peer) in conns.iter_mut() {
+                    // Application-level ping for latency measurement
                     let ping = P2pMessage::Ping {
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_millis() as u64,
                     };
+                    
+                    let start = std::time::Instant::now();
                     
                     if let Err(e) = Self::send_message(&peer.connection, &ping).await {
                         peer.consecutive_failures += 1;
@@ -302,7 +497,10 @@ impl PeerManager {
                         }
                     } else {
                         peer.consecutive_failures = 0;
+                        peer.latency_ms = Some(start.elapsed().as_millis() as u64);
                     }
+                    
+                    peer.last_ping = std::time::Instant::now();
                 }
             }
         });
@@ -310,18 +508,124 @@ impl PeerManager {
 }
 ```
 
+**Health Monitoring Strategy**:
+- **QUIC keepalive** (15s): Handles transport-level health, detects network path failures
+- **Application ping** (30s): Measures latency, detects application-level stalls
+- Both together provide comprehensive health monitoring
+
 #### 7.3 Backpressure Handling
 
-```rust
+// IMPROVED: One long-lived stream per peer with message queue → writer task pattern
+// Opening a new stream per message is expensive
+
 pub struct PeerConnection {
-    // Existing fields...
-    // NEW: Flow control
-    pub pending_sends: Arc<tokio::sync::Semaphore>,
+    pub agent_id: AgentId,
+    pub connection: Connection,
+    pub connected_at: std::time::Instant,
+    // IMPROVED: Long-lived stream with dedicated writer task
     pub send_queue: Arc<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    writer_task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl PeerConnection {
+    pub fn new(agent_id: AgentId, connection: Connection) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(1000); // Buffer 1000 messages
+        
+        let connection_clone = connection.clone();
+        let writer_task = tokio::spawn(async move {
+            Self::writer_task_fn(connection_clone, rx).await;
+        });
+        
+        Self {
+            agent_id,
+            connection,
+            connected_at: std::time::Instant::now(),
+            send_queue: Arc::new(tx),
+            writer_task: Some(writer_task),
+        }
+    }
+    
+    async fn writer_task_fn(mut connection: Connection, mut rx: tokio::sync::mpsc::Receiver<Vec<u8>>) {
+        // Open one bidirectional stream that lives for the connection lifetime
+        let mut bi_stream = match connection.open_bi().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to open bidirectional stream: {}", e);
+                return;
+            }
+        };
+        
+        while let Some(data) = rx.recv().await {
+            // Write length prefix + data
+            let length = (data.len() as u32).to_be_bytes();
+            if let Err(e) = bi_stream.write_all(&length).await {
+                tracing::error!("Failed to write length: {}", e);
+                continue;
+            }
+            if let Err(e) = bi_stream.write_all(&data).await {
+                tracing::error!("Failed to write data: {}", e);
+                continue;
+            }
+        }
+        
+        // Clean up stream when channel closes
+        let _ = bi_stream.finish().await;
+    }
+    
+    pub async fn send(&self, message: P2pMessage) -> Result<(), P2pError> {
+        let data = MessageCodec::encode(&message)?;
+        
+        // Non-blocking send to writer task
+        self.send_queue.send(data)
+            .await
+            .map_err(|_| P2pError::Backpressure("Send queue full".into()))
+    }
 }
 
 impl PeerManager {
     pub async fn send_with_backpressure(
+        &self,
+        peer_id: &AgentId,
+        message: P2pMessage,
+    ) -> Result<(), P2pError> {
+        let connections = self.connections.read().await;
+        let peer = connections.get(peer_id)
+            .ok_or(P2pError::PeerNotFound(peer_id.to_string()))?;
+        
+        // Send to writer task (non-blocking with queue)
+        peer.send(message).await
+    }
+    
+    // For batching multiple messages - also uses the long-lived stream
+    pub async fn batch_send(
+        &self,
+        peer_id: &AgentId,
+        messages: Vec<P2pMessage>,
+    ) -> Result<(), P2pError> {
+        let connections = self.connections.read().await;
+        let peer = connections.get(peer_id)
+            .ok_or(P2pError::PeerNotFound(peer_id.to_string()))?;
+        
+        // Queue all messages to the writer task
+        for message in messages {
+            peer.send(message).await?;
+        }
+        
+        Ok(())
+    }
+}
+
+// Alternative: Simple semaphore-based approach (less efficient but simpler)
+
+pub struct PeerConnectionSimple {
+    pub agent_id: AgentId,
+    pub connection: Connection,
+    pub connected_at: std::time::Instant,
+    pub pending_sends: Arc<tokio::sync::Semaphore>,
+}
+
+impl PeerManager {
+    pub async fn send_with_backpressure_simple(
         &self,
         peer_id: &AgentId,
         message: P2pMessage,
@@ -355,33 +659,196 @@ impl PeerManager {
         drop(permit);  // Release permit
         Ok(())
     }
-    
-    // For batching multiple messages
-    pub async fn batch_send(
-        &self,
-        peer_id: &AgentId,
-        messages: Vec<P2pMessage>,
-    ) -> Result<(), P2pError> {
-        let connections = self.connections.read().await;
-        let peer = connections.get(peer_id)
-            .ok_or(P2pError::PeerNotFound(peer_id.to_string()))?;
-        
-        let mut send = peer.connection.open_bi().await?;
-        
-        for message in messages {
-            let data = MessageCodec::encode(&message)?;
-            let length = (data.len() as u32).to_be_bytes();
-            send.write_all(&length).await?;
-            send.write_all(&data).await?;
+}
+
+### 8. Additional Missing Components
+
+The following components were identified as missing from the original plan:
+
+#### 8.1 NAT Traversal Limitation
+
+**Important**: STUN alone cannot solve symmetric NAT. If you implement internet P2P, you will also need:
+
+- **TURN relay**: A relay server that forwards traffic when direct connection fails
+- **Hole punching coordinator**: A signaling server to coordinate NAT traversal between peers
+
+```rust
+pub enum ConnectionMethod {
+    Direct(SocketAddrV4),
+    HolePunched(SocketAddrV4),
+    Relayed(SocketAddrV4),  // Via TURN relay
+}
+
+impl PeerConnection {
+    pub async fn establish(
+        local_id: AgentId,
+        remote_id: AgentId,
+        remote_addr: Option<SocketAddrV4>,
+        relay_server: Option<SocketAddrV4>,
+    ) -> Result<ConnectionMethod, NatError> {
+        // 1. Try direct connection
+        if let Some(addr) = remote_addr {
+            if Self::test_direct_connect(addr).await {
+                return Ok(ConnectionMethod::Direct(addr));
+            }
         }
         
-        send.finish().await?;
-        Ok(())
+        // 2. Try hole punching
+        if let Some(addr) = remote_addr {
+            if Self::attempt_hole_punch(addr).await {
+                return Ok(ConnectionMethod::HolePunched(addr));
+            }
+        }
+        
+        // 3. Fall back to TURN relay
+        if let Some(relay) = relay_server {
+            return Ok(ConnectionMethod::Relayed(relay));
+        }
+        
+        Err(NatError::ConnectionFailed)
     }
 }
 ```
 
-### 8. Strategic Adjustment - Consider Delaying DHT
+#### 8.2 Peer Scoring for Reputation
+
+Add basic reputation tracking to help with routing decisions:
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct PeerScore {
+    pub latency_ms: u64,           // Average latency
+    pub failures: u32,              // Consecutive failures
+    pub disconnects: u32,           // Total disconnects
+    pub last_success: std::time::Instant,
+    pub last_failure: std::time::Instant,
+}
+
+impl PeerScore {
+    pub fn record_success(&mut self, latency: std::time::Duration) {
+        self.latency_ms = (self.latency_ms + latency.as_millis() as u64) / 2;
+        self.failures = 0;
+        self.last_success = std::time::Instant::now();
+    }
+    
+    pub fn record_failure(&mut self) {
+        self.failures += 1;
+        self.last_failure = std::time::Instant::now();
+    }
+    
+    pub fn record_disconnect(&mut self) {
+        self.disconnects += 1;
+    }
+    
+    pub fn is_healthy(&self) -> bool {
+        self.failures < 3 && self.latency_ms < 5000
+    }
+}
+
+pub struct PeerManager {
+    // ... existing fields
+    pub peer_scores: Arc<RwLock<HashMap<AgentId, PeerScore>>>,
+}
+```
+
+#### 8.3 Rate Limiting
+
+Prevent DoS attacks with per-peer rate limiting:
+
+```rust
+pub struct RateLimiter {
+    message_limits: Arc<RwLock<HashMap<AgentId, TokenBucket>>>,
+    connection_limits: Arc<RwLock<HashMap<AgentId, TokenBucket>>>,
+}
+
+struct TokenBucket {
+    tokens: f64,
+    max_tokens: f64,
+    refill_rate: f64,
+    last_refill: std::time::Instant,
+}
+
+impl TokenBucket {
+    fn try_consume(&mut self, tokens: f64) -> bool {
+        self.refill();
+        if self.tokens >= tokens {
+            self.tokens -= tokens;
+            true
+        } else {
+            false
+        }
+    }
+    
+    fn refill(&mut self) {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_refill = now;
+    }
+}
+
+impl RateLimiter {
+    pub fn new() -> Self {
+        Self {
+            message_limits: Arc::new(RwLock::new(HashMap::new())),
+            connection_limits: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    // 100 messages per second per peer
+    pub async fn check_message_rate(&self, agent_id: &AgentId) -> bool {
+        let mut limits = self.message_limits.write().await;
+        let bucket = limits.entry(agent_id.clone()).or_insert_with(|| TokenBucket {
+            tokens: 100.0,
+            max_tokens: 100.0,
+            refill_rate: 100.0,
+            last_refill: std::time::Instant::now(),
+        });
+        bucket.try_consume(1.0)
+    }
+    
+    // 10 connection attempts per minute per peer
+    pub async fn check_connection_rate(&self, agent_id: &AgentId) -> bool {
+        let mut limits = self.connection_limits.write().await;
+        let bucket = limits.entry(agent_id.clone()).or_insert_with(|| TokenBucket {
+            tokens: 10.0,
+            max_tokens: 10.0,
+            refill_rate: 10.0 / 60.0,  // 10 per minute
+            last_refill: std::time::Instant::now(),
+        });
+        bucket.try_consume(1.0)
+    }
+}
+```
+
+#### 8.4 Stream Limits
+
+Configure QUIC stream limits to prevent resource exhaustion:
+
+```rust
+pub fn create_server_tls_config() -> Result<ServerConfig, QuicError> {
+    let mut server_config = ServerConfig::with_crypto(Arc::new(rustls_config));
+    
+    // Configure transport parameters
+    let mut transport_config = TransportConfig::default();
+    
+    // Limit concurrent streams to prevent resource exhaustion
+    transport_config.max_concurrent_bidi_streams(VarInt::from_u64(16).unwrap());
+    transport_config.max_concurrent_uni_streams(VarInt::from_u64(16).unwrap());
+    
+    // Set keepalive for connection health
+    transport_config.keep_alive_interval(Some(Duration::from_secs(15)));
+    
+    // Set idle timeout
+    transport_config.max_idle_timeout(Some(VarInt::from_u64(30_000).unwrap()));
+    
+    server_config.transport_config(Arc::new(transport_config));
+    
+    Ok(server_config)
+}
+```
+
+### 9. Strategic Adjustment - Consider Delaying DHT
 
 **Note**: Most chat networks never actually need a DHT. Matrix Federation already handles internet connectivity effectively. Consider this strategic adjustment:
 
