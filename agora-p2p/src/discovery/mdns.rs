@@ -1,4 +1,4 @@
-use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent, TxtProperties};
+use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -79,20 +79,16 @@ impl MdnsDiscovery {
         let full_service_type = format!("{}.local.", service_type);
         
         let mut properties = HashMap::new();
-        properties.insert("agent_id".to_string(), agent_id.as_bytes().to_vec());
+        properties.insert("agent_id".to_string(), agent_id.to_string());
         
-        let mut service_info = ServiceInfo::new(
+        ServiceInfo::new(
             &full_service_type,
             instance_name,
             instance_name,
             ips,
             port,
-        ).map_err(|e| Error::Discovery(e.to_string()))?;
-        
-        let txt_properties: TxtProperties = properties.into();
-        service_info.set_properties(txt_properties);
-        
-        Ok(service_info)
+            properties,
+        ).map_err(|e| Error::Discovery(e.to_string()))
     }
     
     pub async fn start_browse(&self) -> Result<(), Error> {
