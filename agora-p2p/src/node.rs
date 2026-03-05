@@ -59,21 +59,21 @@ impl P2pNode {
             &self.config.service_name,
         )?;
         
-        let (discovery, mut discovery_events) = mdns;
+        let (discovery, discovery_events) = mdns;
         discovery.start_browse().await?;
         
         *self.discovery.write().await = Some(discovery);
         
         info!("mDNS discovery started for {}", self.config.agent_id);
         
-        self.spawn_event_handlers(&mut discovery_events).await;
+        self.spawn_event_handlers(discovery_events).await;
         
         Ok(())
     }
     
     async fn spawn_event_handlers(
         &self,
-        discovery_events: &mut mpsc::Receiver<MdnsPeerEvent>,
+        mut discovery_events: mpsc::Receiver<MdnsPeerEvent>,
     ) {
         let transport = self.transport.clone();
         let mesh_events_tx = self.mesh_events_tx.clone();
@@ -87,7 +87,7 @@ impl P2pNode {
                                 info!("Discovered peer: {}", peer.agent_id);
                                 if let Some(addr_str) = peer.addresses.first() {
                                     if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                                        match transport.connect(addr).await {
+                                        match transport.connect(addr, &peer.agent_id, None).await {
                                             Ok(_) => {
                                                 let _ = mesh_events_tx.send(MeshEvent::Connected(peer.agent_id.to_string())).await;
                                             }
@@ -142,8 +142,7 @@ impl P2pNode {
     }
     
     pub async fn connected_peers(&self) -> Vec<String> {
-        let addrs = self.transport.connections.read().await;
-        let peers: Vec<String> = addrs.keys().map(|k| k.to_string()).collect();
-        peers
+        let peers = self.transport.connected_peers().await;
+        peers.iter().map(|k| k.to_string()).collect()
     }
 }

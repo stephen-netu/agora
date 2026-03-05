@@ -199,6 +199,10 @@ impl QuicTransport {
         Ok(quic_connection)
     }
     
+    pub async fn connected_peers(&self) -> Vec<AgentId> {
+        self.connections.read().await.keys().cloned().collect()
+    }
+    
     pub async fn accept(&mut self) -> Result<(QuicConnection, AgentId), Error> {
         let incoming = self.incoming_connections.recv().await
             .ok_or_else(|| Error::Transport("connection channel closed".to_string()))?;

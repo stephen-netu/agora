@@ -105,22 +105,24 @@ impl ServerCertVerifier for FingerprintServerVerifier {
                 ));
             }
             
-            if let std::borrow::Cow::Borrowed(name_str) = server_name {
-                if name_str != *expected_agent_id {
-                    return Err(TlsError::General(
-                        format!("server name '{}' does not match expected agent_id '{}'", name_str, expected_agent_id)
-                    ));
-                }
+            let name_str = match server_name {
+                rustls::pki_types::ServerName::DnsName(name) => name.as_ref(),
+                _ => return Ok(ServerCertVerified::assertion()),
+            };
+            if name_str != *expected_agent_id {
+                return Err(TlsError::General(
+                    format!("server name '{}' does not match expected agent_id '{}'", name_str, expected_agent_id)
+                ));
             }
         } else {
             let trusted = self.store.inner().read()
                 .ok()
                 .and_then(|guard| {
-                    let name = match server_name {
-                        std::borrow::Cow::Borrowed(s) => s,
-                        std::borrow::Cow::Owned(s) => s.as_str(),
+                    let name_str = match server_name {
+                        rustls::pki_types::ServerName::DnsName(name) => name.as_ref(),
+                        _ => return None,
                     };
-                    guard.get(name).map(|fp| *fp == fingerprint)
+                    guard.get(name_str).map(|fp| *fp == fingerprint)
                 })
                 .unwrap_or(false);
             
