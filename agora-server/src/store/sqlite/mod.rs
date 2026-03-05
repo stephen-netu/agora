@@ -219,9 +219,10 @@ impl Storage for SqliteStore {
     async fn search_users(
         &self,
         term: &str,
+        exclude_user_id: &str,
         limit: u64,
     ) -> Result<Vec<UserSearchRecord>, StorageError> {
-        self.search_users_impl(term, limit).await
+        self.search_users_impl(term, exclude_user_id, limit).await
     }
 
     async fn create_token(&self, token: &AccessTokenRecord) -> Result<(), StorageError> {

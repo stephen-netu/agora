@@ -37,7 +37,7 @@ pub struct SearchResponse {
 /// POST /_matrix/client/v3/user_directory/search
 pub async fn search_users(
     State(state): State<AppState>,
-    AuthUser(_user_id, _): AuthUser,
+    AuthUser(user_id, _): AuthUser,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ApiError> {
     let search_term = req.search_term.trim().to_owned();
@@ -63,7 +63,7 @@ pub async fn search_users(
 
     let records = state
         .store
-        .search_users(&search_term, fetch_limit)
+        .search_users(&search_term, &user_id, fetch_limit)
         .await
         .map_err(|e| ApiError::unknown(format!("user search failed: {e}")))?;
 

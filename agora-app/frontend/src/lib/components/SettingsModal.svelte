@@ -24,12 +24,12 @@
 	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; });
 
 	onMount(async () => {
-		const [keys, aid] = await Promise.all([getIdentityKeys(), getAgentId()]);
-		if (keys) {
-			fingerprint = keys.ed25519;
+		const [keysRes, aidRes] = await Promise.allSettled([getIdentityKeys(), getAgentId()]);
+		if (keysRes.status === 'fulfilled' && keysRes.value) {
+			fingerprint = keysRes.value.ed25519;
 		}
-		if (aid) {
-			agentId = aid;
+		if (aidRes.status === 'fulfilled' && aidRes.value) {
+			agentId = aidRes.value;
 		}
 	});
 </script>

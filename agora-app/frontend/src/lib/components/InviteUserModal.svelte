@@ -16,9 +16,12 @@
 	let success = $state(false);
 	let searching = $state(false);
 	let searchTimer: ReturnType<typeof setTimeout> | null = null;
+	let closeTimer: ReturnType<typeof setTimeout> | null = null;
+	let searchRequestId = 0;
 
 	$effect(() => {
 		const term = searchTerm;
+		const requestId = ++searchRequestId;
 		if (searchTimer) clearTimeout(searchTimer);
 		if (term.length < 2) {
 			searchResults = [];
@@ -28,13 +31,21 @@
 			searching = true;
 			try {
 				const resp = await api.searchUsers(term, 8);
-				searchResults = resp.results;
+				if (requestId === searchRequestId && term === searchTerm) {
+					searchResults = resp.results;
+				}
 			} catch {
-				searchResults = [];
+				if (requestId === searchRequestId) searchResults = [];
 			} finally {
-				searching = false;
+				if (requestId === searchRequestId) searching = false;
 			}
 		}, 300);
+	});
+
+	$effect(() => {
+		return () => {
+			if (closeTimer) clearTimeout(closeTimer);
+		};
 	});
 
 	function selectUser(userId: string) {
@@ -51,7 +62,7 @@
 		try {
 			await api.inviteUser(roomId, target);
 			success = true;
-			setTimeout(() => {
+			closeTimer = setTimeout(() => {
 				onClose();
 			}, 1500);
 		} catch (e) {

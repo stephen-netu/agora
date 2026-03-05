@@ -165,6 +165,10 @@ export interface SigchainProof {
 
 /** Initialise (or restore) the sigchain identity. Safe to call on every startup. */
 export async function initSigchain(): Promise<void> {
+	if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+		// Running outside Tauri (e.g., browser dev mode) — sigchain unavailable.
+		return;
+	}
 	try {
 		await tauriInvoke('init_sigchain');
 	} catch (e) {

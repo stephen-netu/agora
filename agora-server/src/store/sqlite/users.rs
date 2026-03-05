@@ -136,15 +136,17 @@ impl SqliteStore {
     pub async fn search_users_impl(
         &self,
         term: &str,
+        exclude_user_id: &str,
         limit: u64,
     ) -> Result<Vec<UserSearchRecord>, StorageError> {
         let pattern = format!("%{}%", term);
         let rows = sqlx::query(
             "SELECT user_id, display_name, avatar_url FROM users \
-             WHERE user_id LIKE ?1 OR display_name LIKE ?1 \
-             LIMIT ?2",
+             WHERE (user_id LIKE ?1 OR display_name LIKE ?1) AND user_id != ?2 \
+             LIMIT ?3",
         )
         .bind(&pattern)
+        .bind(exclude_user_id)
         .bind(limit as i64)
         .fetch_all(&self.pool)
         .await

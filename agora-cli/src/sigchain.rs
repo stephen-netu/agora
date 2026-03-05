@@ -192,7 +192,12 @@ fn load_or_generate_seed(data_dir: &Path) -> Result<[u8; 32], SigchainError> {
             arr.copy_from_slice(&data);
             return Ok(arr);
         }
-        // Truncated file — regenerate.
+        // Wrong length means truncation or corruption — fail loudly.
+        // Silently regenerating would create a new identity and silently lose
+        // any previously signed chain data, which is unacceptable.
+        return Err(SigchainError::Io(
+            "identity_seed has wrong length — file may be corrupted; remove it manually to regenerate".into(),
+        ));
     }
 
     let mut seed = [0u8; 32];
