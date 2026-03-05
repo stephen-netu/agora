@@ -437,6 +437,33 @@ impl AgoraClient {
         format!("{}/_agora{}", self.base_url, path)
     }
 
+    /// Query how many sigchain links the server has stored for `agent_id_hex`.
+    ///
+    /// Returns `0` if the agent is unknown (404). Other errors are propagated.
+    pub async fn get_sigchain_server_length(
+        &self,
+        agent_id_hex: &str,
+    ) -> Result<usize, CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .get(self.agora_url(&format!("/sigchain/{agent_id_hex}")))
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(0);
+        }
+
+        let result: serde_json::Value = Self::parse_response(resp).await?;
+        Ok(result["links"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0))
+    }
+
     /// Publish a sigchain link to the server.
     ///
     /// Returns `(seqno, canonical_hash_hex)` on success. Errors are non-fatal

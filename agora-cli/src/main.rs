@@ -437,6 +437,10 @@ pub(crate) struct SigchainProof {
 /// link is appended and published instead, and `None` is returned with a
 /// warning. This enforces the S-05 loop-detection protocol.
 ///
+/// Before publishing the new link, any previously-appended local links that the
+/// server has not yet seen (e.g. the genesis link on the very first send) are
+/// published in seqno order so the server can verify the full chain.
+///
 /// Returns `Some(SigchainProof)` on success, `None` on any error.
 pub(crate) async fn try_publish_action(
     client: &AgoraClient,
@@ -474,13 +478,35 @@ pub(crate) async fn try_publish_action(
         .map_err(|e| eprintln!("sigchain: append_action failed: {e}"))
         .ok()?;
 
-    let (seqno, _hash) = client
-        .publish_sigchain_link(&agent_id_hex, &link)
+    // Query the server to find out how many links it already has. Any links
+    // after that index (including the genesis on first send) must be published
+    // before the new action link so the server can verify the full chain.
+    let server_len = client
+        .get_sigchain_server_length(&agent_id_hex)
         .await
-        .map_err(|e| eprintln!("sigchain: publish failed (chain still updated locally): {e}"))
-        .ok()?;
+        .unwrap_or_else(|e| {
+            eprintln!("sigchain: could not query server chain length ({e}), assuming 0");
+            0
+        });
 
-    // Persist even on publish failure — chain stays consistent locally.
+    let all_links = &manager.chain.links;
+    let backfill = all_links.get(server_len..).unwrap_or(&[]);
+
+    for catchup_link in backfill {
+        if let Err(e) = client.publish_sigchain_link(&agent_id_hex, catchup_link).await {
+            eprintln!(
+                "sigchain: publish failed for seqno {} (chain still updated locally): {e}",
+                catchup_link.seqno
+            );
+            // Non-fatal: save locally so we can retry next time.
+            let _ = manager.save();
+            return None;
+        }
+    }
+
+    let seqno = link.seqno;
+
+    // Persist the updated chain.
     manager
         .save()
         .map_err(|e| eprintln!("sigchain: save failed: {e}"))
