@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     let port = config.listen_port;
-    let node = P2pNode::new(config).await?;
+    let mut node = P2pNode::new(config).await?;
     node.start(port).await?;
 
     let mut node = node;
