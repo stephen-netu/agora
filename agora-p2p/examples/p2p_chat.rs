@@ -38,9 +38,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     let node = P2pNode::new(config).await?;
-    node.start(port).await?;
+    node.start(config.listen_port).await?;
     
-    println!("Listening on port {}", port);
+    let bound_addr = node.local_addr().await?;
+    println!("Listening on port {}", bound_addr.port());
     println!("Waiting for peers on local network...");
     println!("Type a message and press Enter to broadcast to all connected peers.");
     println!("Type 'quit' to exit.");

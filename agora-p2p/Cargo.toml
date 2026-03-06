@@ -29,7 +29,7 @@ blake3 = "1"
 futures = "0.3"
 bytes = "1"
 pin-project-lite = "0.2"
-rand = "0.8"
+rand = "0.9"
 
 # mDNS discovery
 mdns-sd = "0.12"

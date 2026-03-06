@@ -26,7 +26,8 @@ pub enum MdnsPeerEvent {
 }
 
 pub fn create_instance_name(agent_id: &str) -> String {
-    format!("agora-{}", &agent_id[..8])
+    let prefix: String = agent_id.chars().take(8).collect();
+    format!("agora-{}", prefix)
 }
 
 impl MdnsDiscovery {
