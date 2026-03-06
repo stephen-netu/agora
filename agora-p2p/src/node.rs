@@ -112,10 +112,13 @@ impl P2pNode {
             info!("Incoming connection handler started");
             loop {
                 match transport.accept().await {
-                    Ok((connection, _peer_id)) => {
+                    Ok((connection, peer_id)) => {
                         info!("Accepted incoming connection from {}", connection.remote_addr);
                         
-                        mesh.handle_incoming(connection).await;
+                        let mesh_clone = mesh.clone();
+                        tokio::spawn(async move {
+                            mesh_clone.handle_incoming(connection, Some(peer_id)).await;
+                        });
                     }
                     Err(e) => {
                         if !e.to_string().contains("channel closed") {

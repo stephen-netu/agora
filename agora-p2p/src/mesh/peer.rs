@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use agora_crypto::AgentId;
@@ -27,8 +27,8 @@ pub enum MeshEvent {
 pub struct MeshManager {
     local_id: AgentId,
     transport: Arc<QuicTransport>,
-    connections: Arc<RwLock<HashMap<AgentId, ConnectedPeer>>>,
-    pending: Arc<RwLock<HashMap<AgentId, bool>>>,
+    connections: Arc<RwLock<BTreeMap<AgentId, ConnectedPeer>>>,
+    pending: Arc<RwLock<BTreeMap<AgentId, bool>>>,
     events: mpsc::Sender<MeshEvent>,
 }
 
@@ -41,8 +41,8 @@ impl MeshManager {
         Self {
             local_id,
             transport,
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            pending: Arc::new(RwLock::new(HashMap::new())),
+            connections: Arc::new(RwLock::new(BTreeMap::new())),
+            pending: Arc::new(RwLock::new(BTreeMap::new())),
             events,
         }
     }
@@ -168,7 +168,10 @@ impl MeshManager {
         }
     }
 
-    pub async fn handle_incoming(&self, connection: QuicConnection) {
+    pub async fn handle_incoming(&self, connection: QuicConnection, cert_peer_id: Option<AgentId>) {
+        let remote_addr = connection.remote_addr;
+        tracing::debug!("Handling incoming connection from {}", remote_addr);
+        
         let events = self.events.clone();
         let connections = self.connections.clone();
 
@@ -202,6 +205,17 @@ impl MeshManager {
                     }
                 };
 
+                if let Some(ref cert_peer_id) = cert_peer_id {
+                    if &peer_agent_id != cert_peer_id {
+                        tracing::warn!(
+                            "Identity mismatch: handshake peer_id {} != certificate peer_id {}",
+                            peer_agent_id, cert_peer_id
+                        );
+                        return;
+                    }
+                    tracing::debug!("Identity verified: peer_id matches certificate");
+                }
+
                 let our_handshake = AmpMessage::Handshake {
                     agent_id: self.local_id.to_string(),
                     version: 1,
@@ -223,6 +237,9 @@ impl MeshManager {
                     addresses: vec![connection.remote_addr.to_string()],
                 };
 
+                let mut connection = connection;
+                connection.peer_id = peer_agent_id.clone();
+
                 let connected_peer = ConnectedPeer {
                     peer,
                     sender: send,
@@ -231,6 +248,8 @@ impl MeshManager {
 
                 connections.write().await.insert(peer_agent_id.clone(), connected_peer);
 
+                tracing::info!("Incoming connection established with peer {} at {}", peer_agent_id, remote_addr);
+                
                 let _ = events.send(MeshEvent::Connected(peer_agent_id.clone())).await;
 
                 tokio::spawn(async move {

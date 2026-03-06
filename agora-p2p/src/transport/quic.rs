@@ -223,8 +223,29 @@ impl QuicTransport {
         
         let addr = connection.remote_address();
         
-        let peer_id = AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-            .map_err(|e| Error::Transport(format!("failed to create peer id: {}", e)))?;
+        let peer_id = match connection.peer_identity() {
+            Some(cert_any) => {
+                let cert_chain = cert_any
+                    .downcast_ref::<Vec<CertificateDer<'_>>>()
+                    .ok_or_else(|| Error::Transport("peer identity is not a certificate chain".to_string()))?;
+                
+                let cert = cert_chain.first()
+                    .ok_or_else(|| Error::Transport("no certificate in peer identity".to_string()))?;
+                
+                let (_, x509) = X509Certificate::from_der(cert.as_ref())
+                    .map_err(|e| Error::Transport(format!("failed to parse certificate: {}", e)))?;
+                
+                let subject_str = x509.subject().to_string();
+                let agent_id_str = subject_str.split(':').last()
+                    .ok_or_else(|| Error::Transport("certificate subject has no agent id".to_string()))?;
+                
+                AgentId::from_hex(agent_id_str.trim())
+                    .map_err(|_| Error::Transport(format!("invalid agent_id in certificate subject: {}", agent_id_str)))?
+            }
+            None => {
+                return Err(Error::Transport("no peer identity (TLS certificate) provided".to_string()));
+            }
+        };
         
         let quic_connection = QuicConnection {
             connection: connection.clone(),
@@ -234,7 +255,7 @@ impl QuicTransport {
         
         self.connections.write().await.insert(peer_id.clone(), quic_connection.clone());
         
-        info!("Accepted connection from: {}", addr);
+        info!("Accepted connection from: {} (peer_id: {})", addr, peer_id);
         
         Ok((quic_connection, peer_id))
     }
