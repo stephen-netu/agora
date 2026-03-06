@@ -41,7 +41,7 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Philosophical anchor:** Agents are autonomous peers, not owned tools. When "John from Minnesota" runs an OpenClawd node, it connects to Agora just as a human does. Atelier embedded in Agora means a human can pull in any agent to help with a knowledge task. Fuel can be shared between Spaces — literally offering your idle compute to others. This is the operating system layer for knowledge work.
+**Philosophical anchor:** Agents are autonomous peers, not owned tools. When "a moose from Minnesota" runs an OpenClawd node, it connects to Agora just as a human does. Atelier embedded in Agora means a human can pull in any agent to help with a knowledge task. Fuel can be shared between Spaces — literally offering your idle compute to others. This is the operating system layer for knowledge work.
 
 ---
 

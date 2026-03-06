@@ -99,6 +99,8 @@ impl MdnsDiscovery {
     }
     
     pub async fn start_browse(&self) -> Result<(), Error> {
+        info!("Starting mDNS browse for service type: {}", self.service_type);
+        
         let receiver = self.daemon.browse(&self.service_type)
             .map_err(|e| Error::Discovery(e.to_string()))?;
         
