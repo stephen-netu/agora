@@ -12,6 +12,9 @@ use crate::sync_engine::SyncEngine;
 /// Per-room typing state: user_id -> expiry instant.
 pub type TypingState = Arc<Mutex<BTreeMap<String, BTreeMap<String, Instant>>>>;
 
+/// Per-user presence state storage (in-memory).
+pub type PresenceState = crate::store::presence::PresenceState;
+
 /// Shared application state, passed to all handlers via axum's State extractor.
 #[derive(Clone)]
 pub struct AppState {
@@ -21,6 +24,8 @@ pub struct AppState {
     pub media_path: PathBuf,
     pub max_upload_bytes: u64,
     pub typing: TypingState,
+    /// User presence state: user_id -> presence record.
+    pub presence: PresenceState,
     /// S-02 compliant timestamp provider. Never use SystemTime::now() — use this.
     pub timestamp: Arc<dyn TimestampProvider>,
     /// Server-side secret key for access token generation. Loaded from disk on startup;

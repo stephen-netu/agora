@@ -1,4 +1,5 @@
 pub mod sqlite;
+pub mod presence;
 
 use agora_core::events::RoomEvent;
 use async_trait::async_trait;

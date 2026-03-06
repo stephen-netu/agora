@@ -5,7 +5,7 @@ use axum::Json;
 
 use agora_core::api::*;
 
-use crate::api::AuthUser;
+use crate::api::{AuthUser, presence};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -99,6 +99,7 @@ pub async fn sync(
         let (to_device, otk_counts) =
             collect_to_device(&state, user_id.as_str(), &device_id).await?;
         add_ephemeral_typing(&state, &mut join_map).await;
+        collect_presence_events(&state, &mut join_map).await;
         let invite_map = collect_invites(&state, user_id.as_str()).await?;
 
         return Ok(Json(SyncResponse {
@@ -269,4 +270,49 @@ async fn collect_to_device(
     let otk_counts = state.store.count_one_time_keys(user_id, device_id).await?;
 
     Ok((ToDevicePayload { events }, otk_counts))
+}
+
+/// Collect presence events for all joined room members.
+async fn collect_presence_events(
+    state: &AppState,
+    join_map: &mut BTreeMap<String, JoinedRoom>,
+) {
+    for (room_id, joined) in join_map.iter_mut() {
+        // Get joined members for this room
+        let members = match state.store.get_room_members(room_id).await {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let user_ids: Vec<String> = members
+            .into_iter()
+            .filter(|m| m.membership == "join")
+            .map(|m| m.user_id)
+            .collect();
+
+        if user_ids.is_empty() {
+            continue;
+        }
+
+        // Get presence events for these users
+        let presence_events = presence::get_users_presence(state, &user_ids).await;
+
+        // Add presence events to the ephemeral events
+        if !presence_events.is_empty() {
+            let presence_json: Vec<serde_json::Value> = presence_events
+                .into_iter()
+                .filter_map(|e| serde_json::to_value(e).ok())
+                .collect();
+
+            if let Some(ref mut ephemeral) = joined.ephemeral {
+                for ev in presence_json {
+                    ephemeral.events.push(ev);
+                }
+            } else {
+                joined.ephemeral = Some(EphemeralEvents {
+                    events: presence_json,
+                });
+            }
+        }
+    }
 }

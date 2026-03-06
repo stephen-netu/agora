@@ -4,6 +4,7 @@ pub mod directory;
 pub mod events;
 pub mod keys;
 pub mod media;
+pub mod presence;
 pub mod profile;
 pub mod rooms;
 pub mod sigchain;
@@ -129,6 +130,13 @@ pub fn router(state: AppState) -> Router {
             "/v3/profile/{user_id}/avatar_url",
             get(profile::get_avatar).put(profile::set_avatar),
         )
+        // Presence
+        .route(
+            "/v3/presence/{user_id}/status",
+            get(presence::get_presence).put(presence::set_presence),
+        )
+        .route("/v3/presence/heartbeat", post(presence::heartbeat))
+        .route("/v3/presence/list", post(presence::get_presence_list))
         // Capabilities
         .route("/v3/capabilities", get(capabilities))
         // Devices

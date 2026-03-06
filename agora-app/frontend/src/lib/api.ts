@@ -412,6 +412,79 @@ export class AgoraApi {
 			body: { displayname }
 		});
 	}
+
+	async setAvatarUrl(userId: string, avatarUrl: string): Promise<void> {
+		await this.request('PUT', `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/avatar_url`, {
+			headers: this.authHeaders(),
+			body: { avatar_url: avatarUrl }
+		});
+	}
+
+	// ── Reactions ─────────────────────────────────────────────────
+
+	async sendReaction(roomId: string, eventId: string, emoji: string): Promise<SendEventResponse> {
+		const encoded = encodeURIComponent(roomId);
+		const txnId = crypto.randomUUID().replace(/-/g, '');
+		const content = {
+			'm.relates_to': {
+				rel_type: 'm.annotation',
+				event_id: eventId,
+				key: emoji
+			}
+		};
+		return this.request(
+			'PUT',
+			`/_matrix/client/v3/rooms/${encoded}/send/m.reaction/${txnId}`,
+			{
+				headers: this.authHeaders(),
+				body: content
+			}
+		);
+	}
+
+	// ── Presence ──────────────────────────────────────────────────
+
+	async getPresence(userId: string): Promise<{ presence: 'online' | 'unavailable' | 'offline'; last_active_ago?: number; status_msg?: string; currently_active?: boolean }> {
+		return this.request('GET', `/_matrix/client/v3/presence/${encodeURIComponent(userId)}/status`, {
+			headers: this.authHeaders()
+		});
+	}
+
+	async setPresence(presence: 'online' | 'unavailable' | 'offline', statusMsg?: string): Promise<void> {
+		const userId = this.getUserId();
+		if (!userId) throw new Error('Not authenticated');
+		await this.request('PUT', `/_matrix/client/v3/presence/${encodeURIComponent(userId)}/status`, {
+			headers: this.authHeaders(),
+			body: { presence, status_msg: statusMsg }
+		});
+	}
+
+	async heartbeat(currentlyActive?: boolean): Promise<void> {
+		await this.request('POST', '/_matrix/client/v3/presence/heartbeat', {
+			headers: this.authHeaders(),
+			body: currentlyActive !== undefined ? { currently_active: currentlyActive } : {}
+		});
+	}
+
+	async getPresenceList(userIds: string[]): Promise<Record<string, { presence: 'online' | 'unavailable' | 'offline'; last_active_ago?: number; status_msg?: string; currently_active?: boolean }>> {
+		return this.request('POST', '/_matrix/client/v3/presence/list', {
+			headers: this.authHeaders(),
+			body: userIds
+		});
+	}
+
+	// Helper to get current user ID from token (decode JWT payload)
+	private getUserId(): string | null {
+		if (!this.token) return null;
+		try {
+			const parts = this.token.split('.');
+			if (parts.length !== 3) return null;
+			const payload = JSON.parse(atob(parts[1]));
+			return payload.sub || null;
+		} catch {
+			return null;
+		}
+	}
 }
 
 export const api = new AgoraApi();

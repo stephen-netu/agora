@@ -51,7 +51,7 @@
 ## Dogfood Launch Blockers
 
 - [ ] Verify image rendering works end-to-end in encrypted and unencrypted rooms
-- [ ] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
+- [x] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
 
 ---
 

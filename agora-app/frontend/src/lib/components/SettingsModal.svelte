@@ -15,16 +15,20 @@
 	let currentTheme: ThemeId = $state('dark');
 	theme.subscribe((v) => (currentTheme = v));
 
-	let activeTab: 'appearance' | 'encryption' | 'connection' = $state('appearance');
+	let activeTab: 'appearance' | 'encryption' | 'connection' | 'profile' = $state('appearance');
+	let userId = $state('');
+	let displayName = $state('');
+	let avatarUrl: string | undefined = $state(undefined);
+	let uploadingAvatar = $state(false);
 	let deviceId = $state('');
 	let fingerprint = $state('');
 	let agentId = $state('');
 	let homeserverUrl = $state(api.getBaseUrl());
 
-	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; });
+	auth.subscribe((v) => { deviceId = v.deviceId ?? ''; userId = v.userId ?? ''; });
 
 	onMount(async () => {
-		const [keysRes, aidRes] = await Promise.allSettled([getIdentityKeys(), getAgentId()]);
+		const [keysRes, aidRes, profileRes] = await Promise.allSettled([getIdentityKeys(), getAgentId(), loadProfile()]);
 		if (keysRes.status === 'fulfilled' && keysRes.value) {
 			fingerprint = keysRes.value.ed25519;
 		}
@@ -32,6 +36,50 @@
 			agentId = aidRes.value;
 		}
 	});
+
+	async function loadProfile() {
+		if (!userId) return;
+		try {
+			const profile = await api.getProfile(userId);
+			displayName = profile.displayname ?? '';
+			avatarUrl = profile.avatar_url;
+		} catch (e) {
+			console.error('Failed to load profile:', e);
+		}
+	}
+
+	async function handleAvatarUpload(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || !userId) return;
+
+		uploadingAvatar = true;
+		try {
+			const mxcUri = await api.uploadFile(file);
+			await api.setAvatarUrl(userId, mxcUri);
+			avatarUrl = mxcUri;
+		} catch (e) {
+			console.error('Failed to upload avatar:', e);
+			alert('Failed to upload avatar');
+		} finally {
+			uploadingAvatar = false;
+			input.value = '';
+		}
+	}
+
+	async function handleDisplayNameUpdate() {
+		if (!userId) return;
+		try {
+			await api.setDisplayName(userId, displayName);
+		} catch (e) {
+			console.error('Failed to update display name:', e);
+		}
+	}
+
+	function getAvatarSrc(): string | null {
+		if (!avatarUrl) return null;
+		return api.downloadUrl(avatarUrl);
+	}
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -45,6 +93,11 @@
 
 		<div class="modal-body">
 			<nav class="tabs">
+				<button
+					class="tab"
+					class:active={activeTab === 'profile'}
+					onclick={() => (activeTab = 'profile')}
+				>Profile</button>
 				<button
 					class="tab"
 					class:active={activeTab === 'appearance'}
@@ -63,7 +116,44 @@
 			</nav>
 
 			<div class="tab-content">
-				{#if activeTab === 'encryption'}
+				{#if activeTab === 'profile'}
+					<div class="setting-group">
+						<span class="setting-label">Avatar</span>
+						<div class="avatar-section">
+							{#if getAvatarSrc()}
+								<img class="current-avatar" src={getAvatarSrc()} alt="Profile" />
+							{:else}
+								<div class="avatar-placeholder">{displayName?.charAt(0)?.toUpperCase() || userId?.charAt(1)?.toUpperCase() || '?'}</div>
+							{/if}
+							<div class="avatar-controls">
+								<label class="btn btn-secondary" class:disabled={uploadingAvatar}>
+									{uploadingAvatar ? 'Uploading...' : 'Upload Avatar'}
+									<input type="file" accept="image/*" onchange={handleAvatarUpload} disabled={uploadingAvatar} hidden />
+								</label>
+								{#if avatarUrl}
+									<button class="btn btn-danger" onclick={() => { avatarUrl = undefined; api.setAvatarUrl(userId, ''); }}>Remove</button>
+								{/if}
+							</div>
+						</div>
+					</div>
+					<div class="setting-group">
+						<span class="setting-label">Display Name</span>
+						<div class="displayname-row">
+							<input
+								type="text"
+								class="displayname-input"
+								value={displayName}
+								onchange={(e) => displayName = (e.target as HTMLInputElement).value}
+								placeholder="Your display name"
+							/>
+							<button class="btn btn-primary" onclick={handleDisplayNameUpdate}>Save</button>
+						</div>
+					</div>
+					<div class="setting-group">
+						<span class="setting-label">User ID</span>
+						<code class="mono-value">{userId}</code>
+					</div>
+				{:else if activeTab === 'encryption'}
 					<div class="setting-group">
 						<span class="setting-label">Device ID</span>
 						<code class="mono-value">{deviceId || 'Not set'}</code>
@@ -337,5 +427,104 @@
 		font-size: 0.7rem;
 		color: var(--text-muted);
 		margin-top: 6px;
+	}
+
+	.avatar-section {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+	}
+
+	.current-avatar {
+		width: 80px;
+		height: 80px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid var(--border);
+	}
+
+	.avatar-placeholder {
+		width: 80px;
+		height: 80px;
+		border-radius: 50%;
+		background: var(--surface);
+		border: 2px solid var(--border);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 2rem;
+		font-weight: 600;
+		color: var(--accent);
+	}
+
+	.avatar-controls {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.btn {
+		padding: 8px 16px;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		font-weight: 500;
+		cursor: pointer;
+		border: none;
+		transition: all 0.15s;
+	}
+
+	.btn-primary {
+		background: var(--accent);
+		color: white;
+	}
+
+	.btn-primary:hover {
+		opacity: 0.9;
+	}
+
+	.btn-secondary {
+		background: var(--surface);
+		color: var(--text);
+		border: 1px solid var(--border);
+	}
+
+	.btn-secondary:hover {
+		background: var(--surface-hover);
+	}
+
+	.btn-secondary.disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.btn-danger {
+		background: transparent;
+		color: var(--error, #ff4444);
+		border: 1px solid var(--error, #ff4444);
+	}
+
+	.btn-danger:hover {
+		background: var(--error, #ff4444);
+		color: white;
+	}
+
+	.displayname-row {
+		display: flex;
+		gap: 8px;
+	}
+
+	.displayname-input {
+		flex: 1;
+		padding: 8px 12px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		color: var(--text);
+		font-size: 0.875rem;
+	}
+
+	.displayname-input:focus {
+		outline: none;
+		border-color: var(--accent);
 	}
 </style>

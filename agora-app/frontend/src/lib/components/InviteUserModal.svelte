@@ -9,7 +9,7 @@
 	let { roomId, onClose }: Props = $props();
 
 	let searchTerm = $state('');
-	let searchResults: Array<{ user_id: string; display_name?: string }> = $state([]);
+	let searchResults: Array<{ user_id: string; display_name?: string; avatar_url?: string }> = $state([]);
 	let selectedUser = $state('');
 	let error = $state('');
 	let loading = $state(false);
@@ -113,10 +113,17 @@
 						<ul class="results">
 							{#each searchResults as r (r.user_id)}
 								<li>
-									<button type="button" class="result-item" onclick={() => selectUser(r.user_id)}>
-										<span class="result-name">{r.display_name ?? r.user_id.replace(/@([^:]+).*/, '$1')}</span>
-										<span class="result-id">{r.user_id}</span>
-									</button>
+							<button type="button" class="result-item" onclick={() => selectUser(r.user_id)}>
+								{#if r.avatar_url}
+									<img class="result-avatar" src={api.downloadUrl(r.avatar_url)} alt="" />
+								{:else}
+									<div class="result-avatar-fallback">{(r.display_name ?? r.user_id).charAt(0).toUpperCase()}</div>
+								{/if}
+								<div class="result-info">
+									<span class="result-name">{r.display_name ?? r.user_id.replace(/@([^:]+).*/, '$1')}</span>
+									<span class="result-id">{r.user_id}</span>
+								</div>
+							</button>
 								</li>
 							{/each}
 						</ul>
@@ -243,15 +250,44 @@
 
 	.result-item {
 		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
+		align-items: center;
+		gap: 10px;
 		width: 100%;
 		padding: 8px 12px;
 		background: none;
 		border: none;
 		text-align: left;
 		cursor: pointer;
+	}
+
+	.result-avatar {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		object-fit: cover;
+		flex-shrink: 0;
+	}
+
+	.result-avatar-fallback {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		background: var(--surface-hover);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--accent);
+		flex-shrink: 0;
+	}
+
+	.result-info {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		min-width: 0;
 	}
 
 	.result-item:hover {

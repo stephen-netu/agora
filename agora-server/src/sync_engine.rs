@@ -1,10 +1,18 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use agora_core::events::presence::PresenceEvent;
 use agora_core::events::RoomEvent;
 use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 256;
+
+/// Presence update event for real-time delivery.
+#[derive(Debug, Clone)]
+pub struct PresenceUpdate {
+    pub presence: PresenceEvent,
+    pub room_id: String,
+}
 
 /// Lightweight in-memory broadcast layer for real-time event delivery.
 ///
@@ -14,6 +22,8 @@ const CHANNEL_CAPACITY: usize = 256;
 pub struct SyncEngine {
     /// Map from room_id -> broadcast sender.
     rooms: Mutex<BTreeMap<String, broadcast::Sender<SyncEvent>>>,
+    /// Presence updates channel for real-time presence delivery.
+    presence_tx: broadcast::Sender<PresenceUpdate>,
 }
 
 #[derive(Debug, Clone)]
@@ -24,8 +34,10 @@ pub struct SyncEvent {
 
 impl SyncEngine {
     pub fn new() -> Self {
+        let (presence_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
             rooms: Mutex::new(BTreeMap::new()),
+            presence_tx,
         }
     }
 
@@ -50,5 +62,18 @@ impl SyncEngine {
             .entry(room_id.to_owned())
             .or_insert_with(|| broadcast::channel(CHANNEL_CAPACITY).0);
         tx.subscribe()
+    }
+
+    /// Broadcast a presence update to all listeners.
+    pub fn broadcast_presence(&self, room_id: &str, presence: PresenceEvent) {
+        let _ = self.presence_tx.send(PresenceUpdate {
+            presence,
+            room_id: room_id.to_owned(),
+        });
+    }
+
+    /// Subscribe to presence updates.
+    pub fn subscribe_presence(&self) -> broadcast::Receiver<PresenceUpdate> {
+        self.presence_tx.subscribe()
     }
 }

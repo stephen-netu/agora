@@ -470,6 +470,103 @@ impl AgoraClient {
             .to_owned();
         Ok((seqno, hash))
     }
+
+    // -- Presence ------------------------------------------------------------
+
+    /// Get presence status for a user.
+    pub async fn get_presence(
+        &self,
+        user_id: &str,
+    ) -> Result<GetPresenceResponse, CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .get(self.url(&format!(
+                "/v3/presence/{}/status",
+                urlencoding(user_id)
+            )))
+            .header("Authorization", auth)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Self::parse_response(resp).await
+    }
+
+    /// Set presence status for the current user.
+    pub async fn set_presence(
+        &self,
+        presence: &str,
+        status_msg: Option<&str>,
+    ) -> Result<(), CliClientError> {
+        let auth = self.auth_header()?;
+        let user_id = self
+            .access_token
+            .as_ref()
+            .ok_or(CliClientError::NotLoggedIn)?;
+        // Extract user_id from token (JWT format: header.payload.signature)
+        let user_id = user_id.split('.').nth(1).ok_or(CliClientError::NotLoggedIn)?;
+        let user_id = String::from_utf8(
+            base64::decode_config(user_id, base64::URL_SAFE_NO_PAD)
+                .map_err(|_| CliClientError::NotLoggedIn)?
+        ).map_err(|_| CliClientError::NotLoggedIn)?;
+        let user_id: serde_json::Value = serde_json::from_str(&user_id)
+            .map_err(|_| CliClientError::NotLoggedIn)?;
+        let user_id = user_id["sub"].as_str().ok_or(CliClientError::NotLoggedIn)?;
+
+        let mut body = serde_json::Map::new();
+        body.insert("presence".into(), serde_json::Value::String(presence.to_owned()));
+        if let Some(msg) = status_msg {
+            body.insert("status_msg".into(), serde_json::Value::String(msg.to_owned()));
+        }
+
+        self.http
+            .put(self.url(&format!("/v3/presence/{}/status", urlencoding(user_id))))
+            .header("Authorization", auth)
+            .json(&body)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Ok(())
+    }
+
+    /// Send a heartbeat to keep online status.
+    pub async fn heartbeat(&self, currently_active: Option<bool>) -> Result<(), CliClientError> {
+        let auth = self.auth_header()?;
+        let mut body = serde_json::Map::new();
+        if let Some(active) = currently_active {
+            body.insert("currently_active".into(), serde_json::Value::Bool(active));
+        }
+
+        self.http
+            .post(self.url("/v3/presence/heartbeat"))
+            .header("Authorization", auth)
+            .json(&body)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Ok(())
+    }
+
+    /// Get presence for multiple users.
+    pub async fn get_presence_list(
+        &self,
+        user_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, GetPresenceResponse>, CliClientError> {
+        let auth = self.auth_header()?;
+        let resp = self
+            .http
+            .post(self.url("/v3/presence/list"))
+            .header("Authorization", auth)
+            .json(&user_ids)
+            .send()
+            .await
+            .map_err(CliClientError::Http)?;
+
+        Self::parse_response(resp).await
+    }
 }
 
 fn urlencoding(s: &str) -> String {

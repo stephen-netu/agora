@@ -14,6 +14,10 @@ pub mod api;
 pub mod events;
 pub mod identifiers;
 
+pub mod presence {
+    pub use crate::events::presence::*;
+}
+
 // Re-export common types for convenience
 pub use api::errcode;
 pub use api::ErrorResponse;
