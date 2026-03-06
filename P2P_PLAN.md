@@ -853,9 +853,9 @@ pub fn create_server_tls_config() -> Result<ServerConfig, QuicError> {
 **Note**: Most chat networks never actually need a DHT. Matrix Federation already handles internet connectivity effectively. Consider this strategic adjustment:
 
 > **Consider delaying DHT entirely** - Most chat networks (Signal, Telegram, WhatsApp) use centralized or federated servers rather than pure P2P. Matrix Federation can handle internet connectivity without DHT.
-> 
+>
 > The DHT adds significant complexity for marginal benefit in a chat application. The primary use case (local network P2P) is fully addressed by Phase 1 (mDNS + QUIC).
-> 
+>
 > Only implement DHT if:
 > - True decentralization is a hard requirement
 > - You're willing to maintain DHT bootstrap nodes
@@ -873,7 +873,7 @@ The P2P implementation uses a custom stack built from individual crates rather t
 
 ### Communication Paths
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          Agora Node                                 │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -895,7 +895,7 @@ The P2P implementation uses a custom stack built from individual crates rather t
 │     └─────────────────┘            └─────────────────┘           │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
-```
+```text
 
 ### Design Principles
 
@@ -905,7 +905,7 @@ The P2P stack follows several core principles. First, **minimal dependencies** m
 
 A new crate `agora-p2p` will be added to the workspace with the following internal structure:
 
-```
+```text
 agora-p2p/
 ├── Cargo.toml
 └── src/
@@ -939,7 +939,7 @@ agora-p2p/
         ├── mod.rs
         ├── signed_event.rs
         └── crdt.rs
-```
+```text
 
 ### Workspace Integration
 
@@ -1786,13 +1786,8 @@ impl DhtClient {
     }
 }
 
-impl AgentId {
-    fn from_bytes(bytes: &[u8]) -> Self {
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes[..32]);
-        AgentId(arr)
-    }
-}
+// AgentId::from_bytes is provided by agora-crypto crate
+// Use: AgentId::from_bytes(key).map_err(|e| DhtError::...)
 ```
 
 ### 2.2 NAT Traversal

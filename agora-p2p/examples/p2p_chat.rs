@@ -37,8 +37,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_name: "_agora._udp.local.".to_string(),
     };
     
+    let port = config.listen_port;
     let node = P2pNode::new(config).await?;
-    node.start(config.listen_port).await?;
+    node.start(port).await?;
     
     let bound_addr = node.local_addr().await?;
     println!("Listening on port {}", bound_addr.port());
