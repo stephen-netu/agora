@@ -156,33 +156,77 @@ impl MeshManager {
         }
     }
 
-    pub async fn handle_incoming(&self, peer: Peer, connection: QuicConnection) {
-        let peer_id = peer.agent_id.clone();
+    pub async fn handle_incoming(&self, _peer: Peer, connection: QuicConnection) {
         let events = self.events.clone();
         let connections = self.connections.clone();
 
-        if self.connections.read().await.contains_key(&peer_id) {
-            return;
-        }
-
         match connection.connection.accept_bi().await {
-            Ok((send, recv)) => {
+            Ok((mut send, mut recv)) => {
+                let handshake_bytes = match read_message(&mut recv).await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::warn!("Failed to read handshake from incoming: {}", e);
+                        return;
+                    }
+                };
+
+                let peer_agent_id = match decode(&handshake_bytes) {
+                    Ok(AmpMessage::Handshake { agent_id, .. }) => {
+                        match agora_crypto::AgentId::from_hex(&agent_id) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                tracing::warn!("Invalid agent_id in handshake: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                    Ok(other) => {
+                        tracing::warn!("Expected Handshake, got {:?}", other);
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to decode handshake: {}", e);
+                        return;
+                    }
+                };
+
+                let our_handshake = AmpMessage::Handshake {
+                    agent_id: self.local_id.to_string(),
+                    version: 1,
+                    capabilities: Default::default(),
+                };
+                if let Ok(bytes) = crate::protocol::encode(&our_handshake) {
+                    if let Err(e) = crate::transport::quic::write_message(&mut send, &bytes).await {
+                        tracing::warn!("Failed to send handshake ack: {}", e);
+                    }
+                }
+
+                if connections.read().await.contains_key(&peer_agent_id) {
+                    tracing::debug!("Already connected to {}, dropping duplicate", peer_agent_id);
+                    return;
+                }
+
+                let peer = crate::types::Peer {
+                    agent_id: peer_agent_id.clone(),
+                    addresses: vec![connection.remote_addr.to_string()],
+                };
+
                 let connected_peer = ConnectedPeer {
-                    peer: peer.clone(),
+                    peer,
                     sender: send,
                     connection: connection.clone(),
                 };
 
-                connections.write().await.insert(peer_id.clone(), connected_peer);
+                connections.write().await.insert(peer_agent_id.clone(), connected_peer);
 
-                let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
+                let _ = events.send(MeshEvent::Connected(peer_agent_id.clone())).await;
 
                 tokio::spawn(async move {
-                    Self::read_messages_from_stream(peer_id, recv, events).await;
+                    Self::read_messages_from_stream(peer_agent_id, recv, events).await;
                 });
             }
             Err(e) => {
-                let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept bi error: {}", e))).await;
+                tracing::warn!("Failed to accept_bi on incoming connection: {}", e);
             }
         }
     }

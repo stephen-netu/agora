@@ -90,24 +90,21 @@ impl P2pNode {
     fn spawn_incoming_handler(&self) {
         let transport = self.transport.clone();
         let mesh = self.mesh.clone();
-        let mesh_events_tx = self.mesh_events_tx.clone();
         
         tokio::spawn(async move {
             info!("Incoming connection handler started");
             loop {
                 match transport.accept().await {
-                    Ok((connection, peer_id)) => {
-                        let peer_id_str = peer_id.to_string();
-                        info!("Accepted incoming connection from {} ({})", peer_id_str, connection.remote_addr);
+                    Ok((connection, _peer_id)) => {
+                        info!("Accepted incoming connection from {}", connection.remote_addr);
                         
                         let peer = Peer {
-                            agent_id: peer_id,
+                            agent_id: agora_crypto::AgentId::from_bytes(&[0u8; 32])
+                                .expect("invalid zero bytes"),
                             addresses: vec![connection.remote_addr.to_string()],
                         };
                         
                         mesh.handle_incoming(peer, connection).await;
-                        
-                        let _ = mesh_events_tx.send(MeshEvent::Connected(peer_id_str)).await;
                     }
                     Err(e) => {
                         if !e.to_string().contains("channel closed") {
