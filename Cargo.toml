@@ -37,6 +37,7 @@ bytes = "1"
 pin-project-lite = "0.2"
 rand = "0.9"
 mdns-sd = "0.12"
+x509-parser = "0.16"
 
 [workspace.lints.rust]
 missing_docs = "warn"

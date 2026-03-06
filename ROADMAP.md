@@ -583,3 +583,98 @@ Features beyond Matrix compatibility — Agora-specific enhancements on the near
 2. **High** — AMP Phase 1 (LAN mesh, zero-server local), read receipts, moderation, account data
 3. **Medium** — AMP Phase 2 (identity sovereignty), presence, emoji reactions, user profiles/avatars, E2E enhancements
 4. **Low** — AMP Phase 3+ (internet P2P, DAG, relay), Matrix federation, push notifications, SSO, full-text search
+
+---
+
+## The World Tree — Long-Range Architecture Vision
+
+> Canonical specification: `SOVEREIGN/.sovereign/docs/grand-plan-distributed-resource-economy.md`
+> Near-term plan: `docs/plans/2026-03-05-kos-grand-plan.md`
+
+### The Core Insight
+
+`agora-crypto` derives `AgentId = BLAKE3(Ed25519 verifying_key)`. Yggdrasil network derives its globally-unique IPv6 node address from that same Ed25519 public key. **Same seed. Same key. Two addresses.** Agora's identity system is natively Yggdrasil-compatible — no refactor, just one derivation function.
+
+Yggdrasil is not a future phase. **It is Phase 1.** Introduced alongside (and largely replacing) the raw QUIC + custom TLS cert pinning machinery. The existing QUIC code was a stepping stone. Yggdrasil is the World Tree.
+
+### Revised Transport Hierarchy
+
+```
+mDNS          — zero-config, LAN, always available, zero deps
+Yggdrasil     — primary WAN, E2EE at network layer, no port config, no CA
+DHT (Phase 6) — fallback WAN for nodes without Yggdrasil daemon
+agora-server  — optional Matrix compat bridge, not in critical path
+```
+
+### What Yggdrasil Eliminates From `agora-p2p`
+
+| Current burden | Yggdrasil handles it |
+|---|---|
+| Custom TLS cert generation (`rcgen`) | Network-layer E2EE, no per-connection TLS |
+| `FingerprintVerifier` / `FingerprintStore` | Address IS identity — derived from pubkey |
+| NAT traversal (unsolved) | Path-agnostic routing through mesh nodes |
+| Relay peer coordination (unbuilt) | Free relay via other Yggdrasil participants |
+| DHT for WAN discovery (unbuilt) | Address derivable directly from pubkey |
+
+### Agora Deliverables by Phase
+
+**Phase 1 — Yggdrasil Transport (THE WORLD TREE)**
+- [ ] `agora-p2p/src/transport/yggdrasil.rs` — bind to Yggdrasil IPv6 interface
+- [ ] `agora-p2p/src/identity/yggdrasil.rs` — `yggdrasil_addr_from_pubkey(VerifyingKey) -> Ipv6Addr`
+- [ ] `TransportMode` enum: `{ Quic(QuicConfig), Yggdrasil(YggdrasilConfig), Auto }`
+- [ ] Remove `FingerprintVerifier`, `FingerprintStore` (superseded by Yggdrasil auth)
+- [ ] `P2pNode::start()` probes for Yggdrasil daemon; graceful fallback to QUIC on LAN
+- [ ] Integration test: two Yggdrasil nodes discover and exchange `AmpMessage`
+
+**Phase 3 — Agent Collaboration**
+- [ ] `AmpMessage::CollaborationRequest { block_id, content, from, correlation_path }`
+- [ ] `AmpMessage::CollaborationResponse { block_id, content, agent_id, proof: Option<ZkProof> }`
+
+**Phase 4 — Fuel Sharing**
+- [ ] `AmpMessage::FuelOffer { space_id, from_agent, fuel_tokens, provider, model_hint, expires_at }`
+- [ ] `AmpMessage::FuelClaim { offer_id, claiming_agent, tokens_claimed, sigchain_action_id }`
+- [ ] `AmpMessage::FuelReceipt { claim_id, accepted, tokens_granted }`
+
+**Phase 6 — DHT Fallback (non-Yggdrasil nodes)**
+- [ ] `agora-p2p/src/discovery/dht.rs` — Kademlia, Agora homeservers as bootstrap
+- [ ] `AmpMessage::PeerAnnounce { agent_id, addresses, ttl }`
+- [ ] `P2pConfig::wan_discovery: WanDiscoveryMode`
+
+**Phase 7 — Dispute Game (RFC-005)**
+- [ ] `AmpMessage::DisputeOpen`, `DisputeEvidence`, `DisputeVerdict`
+- [ ] `agora-crypto`: `Sigchain::export_range(from, to) -> Vec<SignedEntry>`
+- [ ] `agora-crypto`: `Sigchain::verify_segment(entries) -> Result<(), SigchainError>`
+- [ ] `SigchainBody::DisputeRefusal` link type
+
+**Phase 8 — On-Chain Anchoring (RFC-007)**
+- [ ] `AmpMessage::StakeProof { checkpoint, on_chain_tx }`
+- [ ] `agora-crypto`: `Checkpoint::as_on_chain_anchor() -> AnchorPayload`
+
+**Phase 9 — ZK Execution Proofs (RFC-006)**
+- [ ] `AmpMessage::ExecutionProof { action_id, zk_proof }`
+- [ ] ZK proof field in `SigchainBody::Action`
+
+**Phase 10 — Compute Credit Economy**
+- [ ] `AmpMessage::CreditTransfer { amount, from, to, signed_by }`
+- [ ] `AmpMessage::CheckpointAnchor { merkle_root, on_chain_tx_id }`
+
+### On `agora-server`
+
+The homeserver remains available as an optional compatibility bridge:
+- Users who need standard Matrix client interop (unencrypted rooms)
+- Offline message queuing for mobile / intermittent connectivity
+- Historical migration from existing Matrix deployments
+
+It is not required for P2P operation. Not in the critical path. Feature flags keep it independent.
+
+---
+
+## Feature Priorities (Updated)
+
+1. **Immediate** — Phase 0: Fix 4 P2P bugs (double-accept, stream loop, zero peer identity, stale test)
+2. **High** — Phase 1: Yggdrasil transport adapter — this is the World Tree, this is the point
+3. **High** — Phase 2: Atelier embeds agora-p2p; `surface.rs:45` wired; mesh node live
+4. **Medium** — Phase 3–4: Agent collaboration, fuel sharing; dogfood blockers in parallel
+5. **Medium** — Phase 5: SOVEREIGN daemon identity delegation
+6. **Low (Near)** — Phase 6: DHT fallback for non-Yggdrasil nodes
+7. **Low (Long)** — Phase 7–10: Dispute game, anchoring, ZK proofs, compute economy

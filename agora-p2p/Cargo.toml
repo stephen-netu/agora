@@ -33,6 +33,9 @@ rand = { workspace = true }
 # mDNS discovery
 mdns-sd = { workspace = true }
 
+# Certificate parsing
+x509-parser = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 

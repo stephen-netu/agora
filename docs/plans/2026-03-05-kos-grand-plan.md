@@ -305,12 +305,12 @@ pub enum IdentitySource {
 
 ---
 
-## What NOT To Build Yet
+## What NOT To Build Yet (in this plan)
 
-- **DHT / NAT traversal**: LAN mesh first, always. mDNS is sufficient for local development and initial users on the same network.
-- **Federation with Matrix homeservers**: `agora-server` exists but P2P is the priority. The two modes (server and P2P) should be independent feature flags.
+- **DHT / NAT traversal**: Yggdrasil handles WAN. DHT is Phase 6 fallback for nodes without Yggdrasil. Not needed for Phase 0–5.
+- **Homeserver as backbone**: `agora-server` is now an optional compatibility bridge. P2P + Yggdrasil is the spine. The two modes remain independent feature flags.
 - **Cross-app data sync protocol**: Atelier blocks are not synced to Agora rooms yet. When they are, it's a new `AmpMessage` variant, not a fundamental architecture change.
-- **Fuel settlement / payment rails**: Fuel sharing in Phase 4 is off-chain, trust-based, cooperative. No blockchain. No payment.
+- **Fuel settlement / payment rails**: Fuel sharing in Phase 4 is off-chain, trust-based, cooperative. On-chain settlement comes at Phase 8+.
 - **Multi-device sigchain operations**: `AddDevice` / `RevokeDevice` / `RotateKey` are defined in sigchain but not needed until Phase 5+.
 
 ---
@@ -337,17 +337,20 @@ atelier/desktop← atelier/api, agora-p2p, s2_sdk
 
 ## Execution Order
 
-1. **Fix the 4 P2P bugs** (see `docs/plans/2026-03-05-kos-p2p-integration.md`, Tasks 1–4)
-2. **Harden agora-p2p public API** (Task 5 in P2P plan)
-3. **Write integration test: two P2pNode instances exchange an AmpMessage** (Task 6)
-4. **Add agora-p2p to atelier/desktop and wire up DesktopState** (Phase 2 above)
-5. **Write Tauri commands and Svelte store for P2P status** (Phase 2 above)
-6. **Wire AtelierTransport to P2pNode** (surface.rs:45 IMPLEMENTATION_REQUIRED)
-7. **Agent collaboration UI in Atelier canvas** (Phase 3)
+1. **Fix the 4 P2P bugs** (`docs/plans/2026-03-05-kos-p2p-integration.md`, Tasks 1–4)
+2. **Yggdrasil transport adapter** — `agora-p2p/src/transport/yggdrasil.rs` + `AgentId → Yggdrasil IPv6` derivation + `TransportMode` enum (Phase 1 of grand plan)
+3. **Harden agora-p2p public API** — `P2pNode`, `MeshEvent`, `AmpMessage` stable exports
+4. **Integration test: two P2pNode instances exchange AmpMessage over Yggdrasil**
+5. **Add agora-p2p to atelier/desktop, wire DesktopState** (Phase 2)
+6. **Tauri commands and Svelte store for P2P status** (Phase 2)
+7. **Wire AtelierTransport to P2pNode** (`surface.rs:45` IMPLEMENTATION_REQUIRED) (Phase 2)
+8. **Agent collaboration UI in Atelier canvas** (Phase 3)
 
-Steps 1–3: work in agora repo.
-Steps 4–6: work in atelier repo, agora-p2p as path dependency.
-Step 7: new Atelier feature branch.
+Steps 1–4: work in agora repo.
+Steps 5–7: work in atelier repo, agora-p2p as path dependency.
+Step 8: new Atelier feature branch.
+
+**Note on Yggdrasil in step 2:** Yggdrasil daemon must be running on the test machine. `P2pNode` degrades gracefully to raw QUIC on LAN if daemon is absent. Ship both — Yggdrasil first, QUIC as fallback.
 
 ---
 
@@ -367,3 +370,46 @@ Step 7: new Atelier feature branch.
 | `atelier/crates/desktop/src-tauri/src/commands/sovereign.rs` | Atelier | Fuel, correlation_id, interventions |
 | `atelier/crates/desktop/svelte/src/lib/stores/sovereignStore.svelte.ts` | Atelier | Svelte 5 sovereign state |
 | `atelier/.meta/specs/architecture-overhaul-2026.md` | Atelier | Full architecture spec |
+
+---
+
+## The Grand Vision: Phase 5 and Beyond
+
+> Canonical specification: `SOVEREIGN/.sovereign/docs/grand-plan-distributed-resource-economy.md`
+> Everything below is a summary. Read the full document for phase specifications, task lists, and RFC definitions.
+
+### The World Tree
+
+Yggdrasil is not a future phase — it is the primary WAN transport, introduced in Phase 1 of the grand plan alongside the existing LAN foundation here. The reordering matters:
+
+**Original plan:** LAN QUIC → DHT → Yggdrasil (Phase 7)
+**Revised plan:** Yggdrasil alongside Phase 0 P2P fixes (Phase 1), DHT as fallback (Phase 6)
+
+**Why:** `agora-crypto` already uses Ed25519 identity. Yggdrasil derives its IPv6 node address from an Ed25519 public key. **Same key material.** Yggdrasil integration is a transport adapter, not an identity refactor. Yggdrasil also eliminates: custom TLS cert pinning, NAT traversal, relay coordination, DHT for primary WAN use. It handles all of it at the network layer, for free.
+
+**New role of `agora-server`:** Optional compatibility bridge for standard Matrix clients and server-backed offline queuing. Not in the critical path. Not required.
+
+### Phase 5: SOVEREIGN Standalone Identity Daemon
+
+Both Atelier and Agora delegate identity to a single `sovereignd` process. One keypair. One sigchain. One AgentId across the mesh. IPC socket interface for `SignRequest`, `AgentIdQuery`, `SigchainAppend`, `SigchainRead`.
+
+### Phase 6: DHT Fallback
+
+Kademlia DHT for nodes that cannot run Yggdrasil. Agora homeservers as bootstrap. Opt-in only. `DhtDiscovery` alongside `MdnsDiscovery`. This is the fallback, not the primary WAN path.
+
+### Phase 7: Sovereign Dispute Game (RFC-005)
+
+Sigchain segments as fraud proofs. No external arbiter. Hash-linked, Ed25519-signed chain is either valid or broken — verifiable by any node. Stake slashed on fraud.
+
+### Phase 8: On-Chain Checkpoint Anchoring (RFC-007)
+
+Periodic `Checkpoint.merkle_root` values submitted on-chain (Solana or equivalent). Makes Sigchain evidence unforgeable to external parties. Stake registry and slashing execution.
+
+### Phase 9: ZK Execution Proving (RFC-006)
+
+WASM execution trace → ZK proof. Agents prove correctness without revealing inputs. Proof attached to `SigchainBody::Action`.
+
+### Phase 10: Compute Credit Economy
+
+Fuel (cooperative, ephemeral) graduates to compute credits (Sigchain-accounted, stake-backed, dispute-resolvable). Peer-to-peer resource exchange. No platform. No rent. Governed by constitutions.
+
