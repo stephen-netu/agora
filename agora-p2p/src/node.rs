@@ -3,7 +3,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::info;
+use tracing::{info, debug};
 
 use crate::error::Error;
 use crate::types::Config;
@@ -96,6 +96,13 @@ impl P2pNode {
                         match event {
                             MdnsPeerEvent::PeerDiscovered(peer) => {
                                 info!("Discovered peer: {}", peer.agent_id);
+                                
+                                // Guard against duplicate connections - check if already connected
+                                if transport.get_connection(&peer.agent_id).await.is_some() {
+                                    debug!("Already connected to peer {}, skipping connect", peer.agent_id);
+                                    continue;
+                                }
+                                
                                 if let Some(addr_str) = peer.addresses.first() {
                                     if let Ok(addr) = addr_str.parse::<SocketAddr>() {
                                         match transport.connect(addr, &peer.agent_id, None).await {
@@ -160,5 +167,9 @@ impl P2pNode {
     pub async fn connected_peers(&self) -> Vec<String> {
         let peers = self.transport.connected_peers().await;
         peers.iter().map(|k| k.to_string()).collect()
+    }
+    
+    pub async fn local_addr(&self) -> Result<SocketAddr, Error> {
+        self.transport.local_addr()
     }
 }
