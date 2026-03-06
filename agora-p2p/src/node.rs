@@ -27,7 +27,7 @@ pub struct P2pNode {
 pub enum MeshEvent {
     Connected(String),
     Disconnected(String),
-    MessageReceived(String, Vec<u8>),
+    MessageReceived(String, crate::protocol::AmpMessage),
     Error(String, String),
 }
 
@@ -93,7 +93,7 @@ impl P2pNode {
                     let public_event = match event {
                         crate::mesh::peer::MeshEvent::Connected(id) => MeshEvent::Connected(id.to_string()),
                         crate::mesh::peer::MeshEvent::Disconnected(id) => MeshEvent::Disconnected(id.to_string()),
-                        crate::mesh::peer::MeshEvent::MessageReceived(id, msg) => MeshEvent::MessageReceived(id.to_string(), msg.into_bytes()),
+                        crate::mesh::peer::MeshEvent::MessageReceived(id, msg) => MeshEvent::MessageReceived(id.to_string(), msg),
                         crate::mesh::peer::MeshEvent::Error(id, err) => MeshEvent::Error(id.to_string(), err),
                     };
                     let _ = events_tx.send(public_event).await;
@@ -115,13 +115,7 @@ impl P2pNode {
                     Ok((connection, _peer_id)) => {
                         info!("Accepted incoming connection from {}", connection.remote_addr);
                         
-                        let peer = Peer {
-                            agent_id: agora_crypto::AgentId::from_bytes(&[0u8; 32])
-                                .expect("invalid zero bytes"),
-                            addresses: vec![connection.remote_addr.to_string()],
-                        };
-                        
-                        mesh.handle_incoming(peer, connection).await;
+                        mesh.handle_incoming(connection).await;
                     }
                     Err(e) => {
                         if !e.to_string().contains("channel closed") {
@@ -163,7 +157,6 @@ impl P2pNode {
                                         AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
                                     });
                                 mesh.disconnect(&peer_id).await;
-                                let _ = mesh_events_tx.send(MeshEvent::Disconnected(agent_id.clone())).await;
                             }
                             MdnsPeerEvent::PeerUpdated(peer) => {
                                 info!("Peer updated: {}", peer.agent_id);
@@ -209,7 +202,7 @@ impl P2pNode {
     }
     
     pub async fn connected_peers(&self) -> Vec<String> {
-        let peers = self.transport.connected_peers().await;
+        let peers = self.mesh.connected_peers().await;
         peers.iter().map(|k| k.to_string()).collect()
     }
     

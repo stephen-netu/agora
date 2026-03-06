@@ -62,7 +62,7 @@ pub fn generate_self_signed_cert(agent_id: &AgentId) -> Result<(CertificateDer<'
     Ok((cert_der, key_der))
 }
 
-fn make_quinn_server_config(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Result<quinn::ServerConfig, Error> {
+fn make_quinn_server_config(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>, max_idle_timeout: u64, keepalive_interval: u64) -> Result<quinn::ServerConfig, Error> {
     let mut server_config = TlsServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![cert], key)
@@ -77,8 +77,8 @@ fn make_quinn_server_config(cert: CertificateDer<'static>, key: PrivateKeyDer<'s
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(Arc::new({
         let mut config = quinn::TransportConfig::default();
-        config.max_idle_timeout(Some(VarInt::from_u32(30_000).into()));
-        config.keep_alive_interval(Some(Duration::from_secs(15)));
+        config.max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout as u32).into()));
+        config.keep_alive_interval(Some(Duration::from_millis(keepalive_interval)));
         config
     }));
     
@@ -89,6 +89,8 @@ fn make_quinn_client_config(
     store: &FingerprintStore,
     expected_agent_id: Option<&AgentId>,
     expected_fingerprint: Option<[u8; 32]>,
+    max_idle_timeout: u64,
+    keepalive_interval: u64,
 ) -> Result<quinn::ClientConfig, Error> {
     let verifier = if let (Some(agent_id), Some(fingerprint)) = (expected_agent_id, expected_fingerprint) {
         Arc::new(FingerprintServerVerifier::with_expected_agent(store.clone(), agent_id.clone(), fingerprint))
@@ -110,8 +112,8 @@ fn make_quinn_client_config(
     let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
     client_config.transport_config(Arc::new({
         let mut config = quinn::TransportConfig::default();
-        config.max_idle_timeout(Some(VarInt::from_u32(30_000).into()));
-        config.keep_alive_interval(Some(Duration::from_secs(15)));
+        config.max_idle_timeout(Some(VarInt::from_u32(max_idle_timeout as u32).into()));
+        config.keep_alive_interval(Some(Duration::from_millis(keepalive_interval)));
         config
     }));
     
@@ -120,7 +122,7 @@ fn make_quinn_client_config(
 
 impl QuicTransport {
     pub async fn new(config: QuicConfig, agent_id: AgentId) -> Result<Self, Error> {
-        let server_config = make_quinn_server_config(config.tls_cert.clone(), config.tls_key.clone_key())?;
+        let server_config = make_quinn_server_config(config.tls_cert.clone(), config.tls_key.clone_key(), config.max_idle_timeout, config.keepalive_interval)?;
         
         let endpoint = Endpoint::server(server_config, "0.0.0.0:0".parse().map_err(|e: std::net::AddrParseError| Error::Transport(e.to_string()))?)?;
         
@@ -160,7 +162,7 @@ impl QuicTransport {
     }
     
     pub async fn listen(&self, addr: SocketAddr) -> Result<(), Error> {
-        let server_config = make_quinn_server_config(self.config.tls_cert.clone(), self.config.tls_key.clone_key())?;
+        let server_config = make_quinn_server_config(self.config.tls_cert.clone(), self.config.tls_key.clone_key(), self.config.max_idle_timeout, self.config.keepalive_interval)?;
         
         let _ = self.endpoint.set_server_config(Some(server_config));
         
@@ -179,6 +181,8 @@ impl QuicTransport {
             &self.fingerprint_store,
             Some(peer_id),
             expected_fingerprint,
+            self.config.max_idle_timeout,
+            self.config.keepalive_interval,
         )?;
         
         let connecting = self.endpoint.connect_with(client_config, addr, &peer_id.to_string())
@@ -335,6 +339,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_quic_transport_creation() {
+        rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
         let (cert, key) = generate_self_signed_cert(&test_agent_id()).unwrap();
         let config = QuicConfig::new(cert, key);
         let agent_id = test_agent_id();

@@ -20,7 +20,7 @@ pub struct ConnectedPeer {
 pub enum MeshEvent {
     Connected(AgentId),
     Disconnected(AgentId),
-    MessageReceived(AgentId, String),
+    MessageReceived(AgentId, AmpMessage),
     Error(AgentId, String),
 }
 
@@ -132,30 +132,6 @@ impl MeshManager {
         }
     }
 
-    async fn read_messages_from_stream(peer_id: AgentId, mut recv: RecvStream, events: mpsc::Sender<MeshEvent>) {
-        loop {
-            match read_message(&mut recv).await {
-                Ok(bytes) => {
-                    match decode(&bytes) {
-                        Ok(message) => {
-                            let msg_str = format!("{:?}", message);
-                            if events.send(MeshEvent::MessageReceived(peer_id.clone(), msg_str)).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("decode error: {}", e))).await;
-                        }
-                    }
-                }
-                Err(e) => {
-                    let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("read error: {}", e))).await;
-                    break;
-                }
-            }
-        }
-    }
-
     async fn accept_streams_loop(
         peer_id: AgentId,
         connection: quinn::Connection,
@@ -171,8 +147,7 @@ impl MeshManager {
                         match read_message(&mut recv).await {
                             Ok(bytes) => match decode(&bytes) {
                                 Ok(message) => {
-                                    let msg_str = format!("{:?}", message);
-                                    let _ = events.send(MeshEvent::MessageReceived(peer_id, msg_str)).await;
+                                    let _ = events.send(MeshEvent::MessageReceived(peer_id, message)).await;
                                 }
                                 Err(e) => {
                                     let _ = events.send(MeshEvent::Error(peer_id, format!("decode error: {}", e))).await;
@@ -193,7 +168,7 @@ impl MeshManager {
         }
     }
 
-    pub async fn handle_incoming(&self, _peer: Peer, connection: QuicConnection) {
+    pub async fn handle_incoming(&self, connection: QuicConnection) {
         let events = self.events.clone();
         let connections = self.connections.clone();
 
@@ -296,7 +271,9 @@ impl MeshManager {
     }
 
     pub async fn disconnect(&self, peer_id: &AgentId) {
-        self.connections.write().await.remove(peer_id);
-        let _ = self.events.send(MeshEvent::Disconnected(peer_id.clone())).await;
+        let was_connected = self.connections.write().await.remove(peer_id).is_some();
+        if was_connected {
+            let _ = self.events.send(MeshEvent::Disconnected(peer_id.clone())).await;
+        }
     }
 }

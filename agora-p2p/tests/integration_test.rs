@@ -12,7 +12,7 @@ fn make_agent_id(hex: &str) -> AgentId {
 fn init_rustls_provider() {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
-        .expect("Failed to install rustls crypto provider");
+        .ok();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
