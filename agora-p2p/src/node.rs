@@ -126,10 +126,12 @@ impl P2pNode {
     }
     
     pub async fn broadcast_room_message(&self, room_id: &str, message: &[u8]) -> Result<(), Error> {
-        let event_id = format!("{}-{}", room_id, std::time::SystemTime::now()
+        let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis());
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or_else(|e| e.duration().as_millis() as u64);
+        
+        let event_id = format!("{}-{}", room_id, timestamp_ms);
         
         let msg = AmpMessage::EventPush {
             room_id: room_id.to_string(),
@@ -137,10 +139,7 @@ impl P2pNode {
                 event_id,
                 event_type: "m.room.message".to_string(),
                 content: message.to_vec(),
-                origin_server_ts: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64,
+                origin_server_ts: timestamp_ms,
             }],
         };
         
