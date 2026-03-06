@@ -20,6 +20,7 @@ pub struct P2pNode {
     mesh: Arc<MeshManager>,
     mesh_events_tx: mpsc::Sender<MeshEvent>,
     mesh_events_rx: Option<mpsc::Receiver<MeshEvent>>,
+    mesh_internal_rx: Option<mpsc::Receiver<crate::mesh::peer::MeshEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +42,7 @@ impl P2pNode {
         
         let (mesh_events_tx, mesh_events_rx) = mpsc::channel(100);
         
-        let (mesh_internal_tx, _mesh_internal_rx) = mpsc::channel(100);
+        let (mesh_internal_tx, mesh_internal_rx) = mpsc::channel(100);
         
         let mesh = Arc::new(MeshManager::new(
             config.agent_id.clone(),
@@ -56,10 +57,11 @@ impl P2pNode {
             mesh,
             mesh_events_tx,
             mesh_events_rx: Some(mesh_events_rx),
+            mesh_internal_rx: Some(mesh_internal_rx),
         })
     }
     
-    pub async fn start(&self, port: u16) -> Result<(), Error> {
+    pub async fn start(&mut self, port: u16) -> Result<(), Error> {
         let listen_addr: SocketAddr = format!("0.0.0.0:{}", port)
             .parse()
             .map_err(|e: std::net::AddrParseError| Error::Transport(e.to_string()))?;
@@ -83,6 +85,21 @@ impl P2pNode {
         self.spawn_incoming_handler();
         
         self.spawn_event_handlers(discovery_events).await;
+        
+        if let Some(mut internal_rx) = self.mesh_internal_rx.take() {
+            let events_tx = self.mesh_events_tx.clone();
+            tokio::spawn(async move {
+                while let Some(event) = internal_rx.recv().await {
+                    let public_event = match event {
+                        crate::mesh::peer::MeshEvent::Connected(id) => MeshEvent::Connected(id.to_string()),
+                        crate::mesh::peer::MeshEvent::Disconnected(id) => MeshEvent::Disconnected(id.to_string()),
+                        crate::mesh::peer::MeshEvent::MessageReceived(id, msg) => MeshEvent::MessageReceived(id.to_string(), msg.into_bytes()),
+                        crate::mesh::peer::MeshEvent::Error(id, err) => MeshEvent::Error(id.to_string(), err),
+                    };
+                    let _ = events_tx.send(public_event).await;
+                }
+            });
+        }
         
         Ok(())
     }
