@@ -123,7 +123,7 @@ impl MeshManager {
                 let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
 
                 tokio::spawn(async move {
-                    Self::read_messages_from_stream(peer_id, recv, events).await;
+                    Self::accept_streams_loop(peer_id, connection.connection, events).await;
                 });
             }
             Err(e) => {
@@ -150,6 +150,43 @@ impl MeshManager {
                 }
                 Err(e) => {
                     let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("read error: {}", e))).await;
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn accept_streams_loop(
+        peer_id: AgentId,
+        connection: quinn::Connection,
+        events: mpsc::Sender<MeshEvent>,
+    ) {
+        loop {
+            match connection.accept_bi().await {
+                Ok((_send, recv)) => {
+                    let peer_id = peer_id.clone();
+                    let events = events.clone();
+                    tokio::spawn(async move {
+                        let mut recv = recv;
+                        match read_message(&mut recv).await {
+                            Ok(bytes) => match decode(&bytes) {
+                                Ok(message) => {
+                                    let msg_str = format!("{:?}", message);
+                                    let _ = events.send(MeshEvent::MessageReceived(peer_id, msg_str)).await;
+                                }
+                                Err(e) => {
+                                    let _ = events.send(MeshEvent::Error(peer_id, format!("decode error: {}", e))).await;
+                                }
+                            },
+                            Err(e) => {
+                                tracing::debug!("Stream closed before message: {}", e);
+                            }
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::debug!("Stream accept loop ended for {}: {}", peer_id, e);
+                    let _ = events.send(MeshEvent::Disconnected(peer_id)).await;
                     break;
                 }
             }
@@ -222,7 +259,7 @@ impl MeshManager {
                 let _ = events.send(MeshEvent::Connected(peer_agent_id.clone())).await;
 
                 tokio::spawn(async move {
-                    Self::read_messages_from_stream(peer_agent_id, recv, events).await;
+                    Self::accept_streams_loop(peer_agent_id, connection.connection, events).await;
                 });
             }
             Err(e) => {
