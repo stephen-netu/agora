@@ -13,6 +13,11 @@ use std::io::{self, Write};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize rustls crypto provider - required when both ring and aws-lc-rs are available
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+    
     let args: Vec<String> = std::env::args().collect();
     let port = args.iter()
         .position(|a| a == "--port")
@@ -29,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config {
         agent_id,
         listen_port: port,
-        service_name: "_agora._udp.local".to_string(),
+        service_name: "_agora._udp.local.".to_string(),
     };
     
     let node = P2pNode::new(config).await?;

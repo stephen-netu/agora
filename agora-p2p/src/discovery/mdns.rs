@@ -25,8 +25,8 @@ pub enum MdnsPeerEvent {
     PeerUpdated(Peer),
 }
 
-pub fn create_service_name(agent_id: &str) -> String {
-    format!("agora-{}._agora._udp.local.", &agent_id[..8])
+pub fn create_instance_name(agent_id: &str) -> String {
+    format!("agora-{}", &agent_id[..8])
 }
 
 impl MdnsDiscovery {
@@ -40,7 +40,7 @@ impl MdnsDiscovery {
         
         let (tx, rx) = mpsc::channel(100);
         
-        let instance_name = create_service_name(agent_id);
+        let instance_name = create_instance_name(agent_id);
         
         let service_info = Self::build_service_info(
             &instance_name,
@@ -76,7 +76,13 @@ impl MdnsDiscovery {
         let ips = get_local_ip()
             .map_err(|e| Error::Discovery(e.to_string()))?;
         
-        let full_service_type = format!("{}.local.", service_type);
+        let full_service_type = if service_type.ends_with(".local.") {
+            service_type.to_string()
+        } else if service_type.ends_with(".local") {
+            format!("{}.", service_type)
+        } else {
+            format!("{}.local.", service_type)
+        };
         
         let mut properties = HashMap::new();
         properties.insert("agent_id".to_string(), agent_id.to_string());
@@ -84,7 +90,7 @@ impl MdnsDiscovery {
         ServiceInfo::new(
             &full_service_type,
             instance_name,
-            instance_name,
+            &format!("{}.local.", instance_name),
             ips,
             port,
             properties,
