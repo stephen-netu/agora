@@ -39,9 +39,10 @@ impl AgentId {
     /// Parse an `AgentId` from a 64-character lower-hex string.
     pub fn from_hex(s: &str) -> Result<Self, CryptoError> {
         if s.len() != 64 {
-            return Err(CryptoError::InvalidSignature(
-                format!("AgentId hex must be 64 chars, got {}", s.len()),
-            ));
+            return Err(CryptoError::InvalidSignature(format!(
+                "AgentId hex must be 64 chars, got {}",
+                s.len()
+            )));
         }
         let mut bytes = [0u8; 32];
         for (i, b) in bytes.iter_mut().enumerate() {
@@ -50,14 +51,24 @@ impl AgentId {
         }
         Ok(Self(bytes))
     }
+
+    /// Parse an `AgentId` from a 32-byte slice.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() != 32 {
+            return Err(CryptoError::InvalidKey(format!(
+                "AgentId requires 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(bytes);
+        Ok(Self(arr))
+    }
 }
 
 impl fmt::Display for AgentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hex: String = self.0[..8]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let hex: String = self.0[..8].iter().map(|b| format!("{b:02x}")).collect();
         write!(f, "agnt-{hex}")
     }
 }
@@ -85,7 +96,10 @@ impl AgentIdentity {
     pub fn from_seed(seed: &[u8; 32]) -> Self {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed);
         let agent_id = AgentId::from_public_key(&signing_key.verifying_key());
-        Self { agent_id, signing_key }
+        Self {
+            agent_id,
+            signing_key,
+        }
     }
 
     /// Return the Ed25519 verifying key for this identity.
@@ -168,7 +182,6 @@ pub enum SigchainBody {
     },
 
     // ── Phase 2: Behavioral Tracking ─────────────────────────────────────────
-
     /// Records one behavioral event taken by the agent (tool call, message, etc.).
     Action {
         /// Matrix event type (e.g., `"agora.tool_call"`, `"m.room.message"`).
@@ -290,7 +303,11 @@ impl SigchainLink {
     /// Serializes `(seqno, prev_hash, body.signing_view())` with `rmp_serde`.
     /// The signing view strips co-signing material from Genesis bodies so that
     /// both the primary signer and co-signer sign identical bytes.
-    fn signed_bytes(seqno: u64, prev_hash: &[u8; 32], body: &SigchainBody) -> Result<Vec<u8>, CryptoError> {
+    fn signed_bytes(
+        seqno: u64,
+        prev_hash: &[u8; 32],
+        body: &SigchainBody,
+    ) -> Result<Vec<u8>, CryptoError> {
         let view = body.signing_view();
         rmp_serde::to_vec_named(&(seqno, prev_hash, &view))
             .map_err(|e| CryptoError::Encoding(e.to_string()))
@@ -301,8 +318,8 @@ impl SigchainLink {
     /// The hash is over the full link (including the signature) so that a
     /// later link's `prev_hash` commits to the entire prior record.
     pub fn canonical_hash(&self) -> Result<[u8; 32], CryptoError> {
-        let bytes = rmp_serde::to_vec_named(self)
-            .map_err(|e| CryptoError::Encoding(e.to_string()))?;
+        let bytes =
+            rmp_serde::to_vec_named(self).map_err(|e| CryptoError::Encoding(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
 }
@@ -464,7 +481,9 @@ impl Sigchain {
 
             // Body-level constraints.
             match &link.body {
-                SigchainBody::Action { correlation_path, .. } => {
+                SigchainBody::Action {
+                    correlation_path, ..
+                } => {
                     if correlation_path.len() > 16 {
                         return Err(CryptoError::SigchainVerification(format!(
                             "link {idx}: correlation_path exceeds 16-hop limit (S-05)"
@@ -478,7 +497,11 @@ impl Sigchain {
                         )));
                     }
                 }
-                SigchainBody::Refusal { reason, correlation_path_snapshot, .. } => {
+                SigchainBody::Refusal {
+                    reason,
+                    correlation_path_snapshot,
+                    ..
+                } => {
                     if reason.len() > 256 {
                         return Err(CryptoError::SigchainVerification(format!(
                             "link {idx}: Refusal reason exceeds 256 bytes"
@@ -494,15 +517,14 @@ impl Sigchain {
             }
 
             // Signature verification — use signing_view so Genesis co-sig fields are stripped.
-            let vk = VerifyingKey::from_bytes(&link.signer)
-                .map_err(|e| CryptoError::SigchainVerification(format!("link {idx}: bad signer key: {e}")))?;
+            let vk = VerifyingKey::from_bytes(&link.signer).map_err(|e| {
+                CryptoError::SigchainVerification(format!("link {idx}: bad signer key: {e}"))
+            })?;
 
             let to_sign = SigchainLink::signed_bytes(link.seqno, &link.prev_hash, &link.body)?;
 
             let sig_bytes: [u8; 64] = link.signature.as_slice().try_into().map_err(|_| {
-                CryptoError::SigchainVerification(format!(
-                    "link {idx}: signature must be 64 bytes"
-                ))
+                CryptoError::SigchainVerification(format!("link {idx}: signature must be 64 bytes"))
             })?;
             let signature = Signature::from_bytes(&sig_bytes);
 
@@ -511,18 +533,24 @@ impl Sigchain {
             })?;
 
             // Co-signer verification for Genesis.
-            if let SigchainBody::Genesis { cosigner_key, cosigner_signature, .. } = &link.body {
+            if let SigchainBody::Genesis {
+                cosigner_key,
+                cosigner_signature,
+                ..
+            } = &link.body
+            {
                 if let (Some(ck), Some(cs)) = (cosigner_key, cosigner_signature) {
                     let cosigner_vk_bytes: [u8; 32] = ck.as_slice().try_into().map_err(|_| {
                         CryptoError::SigchainVerification(
                             "genesis cosigner_key must be 32 bytes".into(),
                         )
                     })?;
-                    let cosigner_vk = VerifyingKey::from_bytes(&cosigner_vk_bytes).map_err(|e| {
-                        CryptoError::SigchainVerification(format!(
-                            "genesis: bad cosigner_key: {e}"
-                        ))
-                    })?;
+                    let cosigner_vk =
+                        VerifyingKey::from_bytes(&cosigner_vk_bytes).map_err(|e| {
+                            CryptoError::SigchainVerification(format!(
+                                "genesis: bad cosigner_key: {e}"
+                            ))
+                        })?;
 
                     let cosig_bytes: [u8; 64] = cs.as_slice().try_into().map_err(|_| {
                         CryptoError::SigchainVerification(
@@ -575,7 +603,11 @@ impl Sigchain {
             let mut i = 0;
             while i < level.len() {
                 let left = level[i];
-                let right = if i + 1 < level.len() { level[i + 1] } else { level[i] };
+                let right = if i + 1 < level.len() {
+                    level[i + 1]
+                } else {
+                    level[i]
+                };
                 let mut hasher = blake3::Hasher::new();
                 hasher.update(b"agora:merkle:node");
                 hasher.update(&left);
@@ -692,12 +724,18 @@ mod tests {
     #[test]
     fn test_genesis_with_capabilities() {
         let identity = make_identity(0x31);
-        let caps = vec!["io:FileRead:1.0".to_string(), "llm:Generate:1.0".to_string()];
+        let caps = vec![
+            "io:FileRead:1.0".to_string(),
+            "llm:Generate:1.0".to_string(),
+        ];
         let chain = Sigchain::genesis(&identity, caps.clone(), None).expect("genesis failed");
 
         chain.verify_chain().expect("chain verification failed");
         match &chain.links[0].body {
-            SigchainBody::Genesis { granted_capabilities, .. } => {
+            SigchainBody::Genesis {
+                granted_capabilities,
+                ..
+            } => {
                 assert_eq!(*granted_capabilities, caps);
             }
             _ => panic!("expected Genesis"),
@@ -710,10 +748,16 @@ mod tests {
         let cosigner = make_identity(0x33);
         let chain = Sigchain::genesis(&agent, vec![], Some(&cosigner)).expect("genesis failed");
 
-        chain.verify_chain().expect("co-signed genesis failed verification");
+        chain
+            .verify_chain()
+            .expect("co-signed genesis failed verification");
 
         match &chain.links[0].body {
-            SigchainBody::Genesis { cosigner_key, cosigner_signature, .. } => {
+            SigchainBody::Genesis {
+                cosigner_key,
+                cosigner_signature,
+                ..
+            } => {
                 assert!(cosigner_key.is_some());
                 assert!(cosigner_signature.is_some());
             }
@@ -728,7 +772,10 @@ mod tests {
         let mut chain = Sigchain::genesis(&agent, vec![], Some(&cosigner)).expect("genesis failed");
 
         // Tamper with the co-signer signature.
-        if let SigchainBody::Genesis { cosigner_signature, .. } = &mut chain.links[0].body {
+        if let SigchainBody::Genesis {
+            cosigner_signature, ..
+        } = &mut chain.links[0].body
+        {
             if let Some(sig) = cosigner_signature {
                 sig[0] ^= 0xFF;
             }
@@ -756,7 +803,9 @@ mod tests {
             .expect("append failed");
 
         assert_eq!(chain.len(), 2);
-        chain.verify_chain().expect("chain verification failed after add_device");
+        chain
+            .verify_chain()
+            .expect("chain verification failed after add_device");
     }
 
     #[test]
@@ -784,7 +833,9 @@ mod tests {
             .expect("revoke device failed");
 
         assert_eq!(chain.len(), 3);
-        chain.verify_chain().expect("chain verification failed after revoke");
+        chain
+            .verify_chain()
+            .expect("chain verification failed after revoke");
     }
 
     // ── Action ────────────────────────────────────────────────────────────────
@@ -813,7 +864,9 @@ mod tests {
             )
             .expect("action append failed");
 
-        chain.verify_chain().expect("chain verification failed after action");
+        chain
+            .verify_chain()
+            .expect("chain verification failed after action");
     }
 
     #[test]
@@ -915,7 +968,9 @@ mod tests {
             .expect("checkpoint append failed");
 
         assert_eq!(chain.len(), 4); // Genesis + 2 Action + 1 Checkpoint
-        chain.verify_chain().expect("verify failed after checkpoint");
+        chain
+            .verify_chain()
+            .expect("verify failed after checkpoint");
     }
 
     #[test]
@@ -974,7 +1029,9 @@ mod tests {
             )
             .expect("trust transition append failed");
 
-        chain.verify_chain().expect("verify failed after trust transition");
+        chain
+            .verify_chain()
+            .expect("verify failed after trust transition");
     }
 
     #[test]
@@ -1025,7 +1082,10 @@ mod tests {
             device_id: "different-device".to_string(),
         };
 
-        assert!(chain.verify_chain().is_err(), "tampered body should fail verification");
+        assert!(
+            chain.verify_chain().is_err(),
+            "tampered body should fail verification"
+        );
     }
 
     #[test]
@@ -1046,7 +1106,10 @@ mod tests {
         // Corrupt the prev_hash of the second link.
         chain.links[1].prev_hash[0] ^= 0xFF;
 
-        assert!(chain.verify_chain().is_err(), "tampered prev_hash should fail verification");
+        assert!(
+            chain.verify_chain().is_err(),
+            "tampered prev_hash should fail verification"
+        );
     }
 
     #[test]
@@ -1075,7 +1138,9 @@ mod tests {
             .expect("add device after rotate failed");
 
         assert_eq!(chain.len(), 3);
-        chain.verify_chain().expect("multi-link chain failed verification");
+        chain
+            .verify_chain()
+            .expect("multi-link chain failed verification");
     }
 
     #[test]
@@ -1109,7 +1174,10 @@ mod tests {
     fn test_has_loop_not_present() {
         let identity = make_identity(0xE1);
         let other = make_identity(0xE2);
-        assert!(!Sigchain::has_loop(&identity.agent_id, &[other.agent_id.clone()]));
+        assert!(!Sigchain::has_loop(
+            &identity.agent_id,
+            &[other.agent_id.clone()]
+        ));
     }
 
     #[test]
@@ -1142,7 +1210,9 @@ mod tests {
             .expect("append refusal failed");
 
         assert_eq!(chain.len(), 2);
-        chain.verify_chain().expect("chain with refusal failed verification");
+        chain
+            .verify_chain()
+            .expect("chain with refusal failed verification");
 
         match &chain.links[1].body {
             SigchainBody::Refusal {
@@ -1183,8 +1253,9 @@ mod tests {
         let identity = make_identity(0xE8);
         let mut chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
 
-        let oversized_path: Vec<AgentId> =
-            (0u8..17).map(|i| make_identity(0xF0 + i).agent_id).collect();
+        let oversized_path: Vec<AgentId> = (0u8..17)
+            .map(|i| make_identity(0xF0 + i).agent_id)
+            .collect();
 
         chain
             .append(
