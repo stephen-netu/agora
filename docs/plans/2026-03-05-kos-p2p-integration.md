@@ -1373,3 +1373,768 @@ Before calling Phase 2 complete:
 - The `Capabilities` struct in `AmpMessage::Handshake` has all-false fields. Populate them with actual capabilities once features stabilize.
 - `MdnsDiscovery::get_local_ip` uses a socket-connect trick that works but requires internet DNS reachability. Consider using `local-ip-address` crate or binding to `0.0.0.0` and letting mDNS pick the interface.
 - `QuicTransport` stores connections in two separate maps (its own `connections` and `MeshManager::connections`). This is redundant — `MeshManager` should own the source of truth. Low priority, but worth cleaning up in Phase 2 or 3.
+
+---
+
+## Phase 6: Yggdrasil Transport Integration — The World Tree
+
+> **Execute this phase AFTER Tasks 1–4 (bug fixes).** Before Atelier can embed agora-p2p, P2P must support Yggdrasil as the primary WAN transport. This phase implements the World Tree layer.
+>
+> **Architectural decision:** Yggdrasil is an **underlay**, not a replacement for QUIC. agora-p2p continues to use AmpMessage over QUIC, but binds the QUIC endpoint to the Yggdrasil IPv6 interface instead of `0.0.0.0`. Yggdrasil handles E2EE at the network layer, making `FingerprintVerifier`/`FingerprintStore`/`rcgen` redundant.
+>
+> **Canonical spec:** `SOVEREIGN/.sovereign/docs/grand-plan-distributed-resource-economy.md` § Phase 1
+> **After this phase:** proceed to Atelier Phase 2 (`docs/plans/grand-plan-alignment.md`).
+
+### Task 12: Add `TransportMode` enum and `YggdrasilConfig`
+
+**Files:**
+- Modify: `agora-p2p/src/types.rs` (or `agora-p2p/src/lib.rs` if types are inline)
+- Modify: `agora-p2p/src/node.rs`
+
+**Step 1: Write the failing test**
+
+```rust
+// In agora-p2p/src/types.rs or a new test module
+#[test]
+fn transport_mode_auto_selects_yggdrasil_when_daemon_present() {
+    // This will fail until TransportMode exists
+    let mode = TransportMode::Auto;
+    // We can't actually probe for the daemon in a unit test,
+    // so just verify the type compiles and has the expected variants
+    match mode {
+        TransportMode::Quic(_) => {}
+        TransportMode::Yggdrasil(_) => {}
+        TransportMode::Auto => {}
+    }
+}
+```
+
+**Step 2: Run test to verify it fails**
+
+```bash
+cd /Users/netu/Projects/KOS/agora
+cargo test -p agora-p2p transport_mode_auto -v
+```
+
+Expected: FAIL — `TransportMode` not found
+
+**Step 3: Add the types**
+
+In `agora-p2p/src/types.rs` (create if it doesn't exist, otherwise add to appropriate module):
+
+```rust
+/// QUIC transport configuration. Used for LAN-only operation (no Yggdrasil daemon).
+#[derive(Debug, Clone)]
+pub struct QuicConfig {
+    /// Port to listen on. 0 = OS-assigned.
+    pub listen_port: u16,
+}
+
+/// Yggdrasil transport configuration.
+#[derive(Debug, Clone)]
+pub struct YggdrasilConfig {
+    /// Yggdrasil admin socket path. Default: /var/run/yggdrasil.sock (Linux)
+    /// or ~/Library/Application Support/yggdrasil/admin.sock (macOS).
+    pub admin_socket: Option<std::path::PathBuf>,
+    /// Port to listen on within the Yggdrasil address space. 0 = OS-assigned.
+    pub listen_port: u16,
+}
+
+/// How agora-p2p connects to the network.
+#[derive(Debug, Clone, Default)]
+pub enum TransportMode {
+    /// Use raw QUIC bound to 0.0.0.0. LAN only, no WAN. Fallback when no Yggdrasil daemon.
+    Quic(QuicConfig),
+    /// Bind QUIC to the local Yggdrasil IPv6 interface. Global WAN, E2EE at network layer.
+    Yggdrasil(YggdrasilConfig),
+    /// Probe for Yggdrasil daemon on startup. Use Yggdrasil if found, QUIC otherwise.
+    #[default]
+    Auto,
+}
+```
+
+Add `transport: TransportMode` to `P2pConfig`:
+
+```rust
+pub struct P2pConfig {
+    pub agent_id: AgentId,
+    pub service_name: String,
+    pub listen_port: u16,
+    /// Transport selection. Defaults to Auto (Yggdrasil if daemon found, QUIC otherwise).
+    pub transport: TransportMode,
+}
+
+impl Default for P2pConfig {
+    fn default() -> Self {
+        Self {
+            agent_id: AgentId::default(), // must be overridden
+            service_name: "agora".to_string(),
+            listen_port: 0,
+            transport: TransportMode::Auto,
+        }
+    }
+}
+```
+
+**Step 4: Run test to verify it passes**
+
+```bash
+cargo test -p agora-p2p transport_mode_auto -v
+```
+
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add agora-p2p/src/
+git commit -m "feat(agora-p2p): add TransportMode enum and YggdrasilConfig types"
+```
+
+---
+
+### Task 13: Implement `yggdrasil_addr_from_pubkey`
+
+**Files:**
+- Create: `agora-p2p/src/identity/yggdrasil.rs`
+- Modify: `agora-p2p/src/identity/mod.rs`
+
+This function derives the Yggdrasil IPv6 address from an Ed25519 verifying key using the same algorithm Yggdrasil itself uses. It requires no running daemon — it is a pure cryptographic derivation.
+
+**Step 1: Write the failing test**
+
+```rust
+// In agora-p2p/src/identity/yggdrasil.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn same_key_produces_same_address() {
+        let seed = [42u8; 32];
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+
+        let addr1 = yggdrasil_addr_from_pubkey(&verifying_key);
+        let addr2 = yggdrasil_addr_from_pubkey(&verifying_key);
+
+        assert_eq!(addr1, addr2, "address derivation must be deterministic");
+    }
+
+    #[test]
+    fn different_keys_produce_different_addresses() {
+        let key1 = SigningKey::from_bytes(&[1u8; 32]).verifying_key();
+        let key2 = SigningKey::from_bytes(&[2u8; 32]).verifying_key();
+
+        assert_ne!(
+            yggdrasil_addr_from_pubkey(&key1),
+            yggdrasil_addr_from_pubkey(&key2),
+        );
+    }
+
+    #[test]
+    fn address_is_in_yggdrasil_range() {
+        let key = SigningKey::from_bytes(&[99u8; 32]).verifying_key();
+        let addr = yggdrasil_addr_from_pubkey(&key);
+        // Yggdrasil addresses start with 0x02 (first byte of the IPv6 address)
+        assert_eq!(addr.octets()[0], 0x02, "Yggdrasil addresses must start with 0x02");
+    }
+}
+```
+
+**Step 2: Run tests to verify they fail**
+
+```bash
+cargo test -p agora-p2p yggdrasil_addr -v
+```
+
+Expected: FAIL — `yggdrasil_addr_from_pubkey` not found
+
+**Step 3: Implement the derivation**
+
+Create `agora-p2p/src/identity/yggdrasil.rs`:
+
+```rust
+//! Yggdrasil IPv6 address derivation from Ed25519 public keys.
+//!
+//! Yggdrasil derives node addresses by computing SHA-512 of the public key bytes,
+//! then finding the position of the first zero bit after the leading ones.
+//! The address prefix is 0x02 followed by bits derived from the hash.
+//!
+//! Reference: https://github.com/yggdrasil-network/yggdrasil-go/blob/develop/src/address/address.go
+
+use ed25519_dalek::VerifyingKey;
+use sha2::{Digest, Sha512};
+use std::net::Ipv6Addr;
+
+/// Derive a Yggdrasil IPv6 address from an Ed25519 verifying key.
+///
+/// This is a pure cryptographic derivation — no daemon required.
+/// The resulting address uniquely identifies the node on the Yggdrasil mesh.
+pub fn yggdrasil_addr_from_pubkey(verifying_key: &VerifyingKey) -> Ipv6Addr {
+    let hash = Sha512::digest(verifying_key.as_bytes());
+    addr_from_hash(&hash)
+}
+
+/// Internal: derive Yggdrasil address from a 64-byte SHA-512 hash.
+fn addr_from_hash(hash: &[u8]) -> Ipv6Addr {
+    // Count leading one bits in the hash
+    let mut ones = 0u8;
+    'outer: for byte in hash.iter() {
+        for bit in (0..8).rev() {
+            if byte & (1 << bit) != 0 {
+                ones += 1;
+            } else {
+                break 'outer;
+            }
+        }
+    }
+
+    // Build a 16-byte IPv6 address:
+    // First byte: 0x02 (Yggdrasil global unicast prefix)
+    // Second byte: number of leading ones (the "prefix length" of the node's subnet)
+    // Remaining 14 bytes: bits from the hash starting after the leading ones and the zero bit
+    let mut addr_bytes = [0u8; 16];
+    addr_bytes[0] = 0x02;
+    addr_bytes[1] = ones;
+
+    // Skip `ones + 1` bits from the hash (the leading ones + the terminating zero),
+    // then copy the next 112 bits (14 bytes) into the address
+    let skip_bits = (ones as usize) + 1;
+    let skip_bytes = skip_bits / 8;
+    let bit_offset = skip_bits % 8;
+
+    for i in 0..14 {
+        let src_idx = skip_bytes + i;
+        if src_idx + 1 < hash.len() {
+            if bit_offset == 0 {
+                addr_bytes[2 + i] = hash[src_idx];
+            } else {
+                addr_bytes[2 + i] = (hash[src_idx] << bit_offset)
+                    | (hash[src_idx + 1] >> (8 - bit_offset));
+            }
+        }
+    }
+
+    Ipv6Addr::from(addr_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    #[test]
+    fn same_key_produces_same_address() {
+        let seed = [42u8; 32];
+        let signing_key = SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+        let addr1 = yggdrasil_addr_from_pubkey(&verifying_key);
+        let addr2 = yggdrasil_addr_from_pubkey(&verifying_key);
+        assert_eq!(addr1, addr2);
+    }
+
+    #[test]
+    fn different_keys_produce_different_addresses() {
+        let key1 = SigningKey::from_bytes(&[1u8; 32]).verifying_key();
+        let key2 = SigningKey::from_bytes(&[2u8; 32]).verifying_key();
+        assert_ne!(yggdrasil_addr_from_pubkey(&key1), yggdrasil_addr_from_pubkey(&key2));
+    }
+
+    #[test]
+    fn address_is_in_yggdrasil_range() {
+        let key = SigningKey::from_bytes(&[99u8; 32]).verifying_key();
+        let addr = yggdrasil_addr_from_pubkey(&key);
+        assert_eq!(addr.octets()[0], 0x02);
+    }
+}
+```
+
+Add `sha2` to `agora-p2p/Cargo.toml` if not already present:
+
+```toml
+sha2 = "0.10"
+```
+
+Expose from `agora-p2p/src/identity/mod.rs`:
+
+```rust
+pub mod yggdrasil;
+pub use yggdrasil::yggdrasil_addr_from_pubkey;
+```
+
+**Step 4: Run tests**
+
+```bash
+cargo test -p agora-p2p yggdrasil_addr -v
+```
+
+Expected: all 3 tests PASS
+
+**Step 5: Commit**
+
+```bash
+git add agora-p2p/src/identity/
+git commit -m "feat(agora-p2p): add Yggdrasil IPv6 address derivation from Ed25519 pubkey"
+```
+
+---
+
+### Task 14: Implement `YggdrasilTransport` — daemon probe and interface bind
+
+**Files:**
+- Create: `agora-p2p/src/transport/yggdrasil.rs`
+- Modify: `agora-p2p/src/node.rs`
+
+**Step 1: Write the failing test**
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_returns_none_when_no_daemon() {
+        // In a test environment there's no Yggdrasil daemon running.
+        // probe_yggdrasil_daemon() should return None gracefully.
+        let result = probe_yggdrasil_daemon(None);
+        // Either None (no daemon) or Some(addr) if running — just must not panic
+        let _ = result; // accept any result, we're testing it doesn't crash
+    }
+
+    #[test]
+    fn yggdrasil_config_default_socket_path() {
+        let config = YggdrasilConfig { admin_socket: None, listen_port: 0 };
+        let path = default_admin_socket_path();
+        // Must return a plausible path, not panic
+        assert!(path.to_string_lossy().len() > 0);
+    }
+}
+```
+
+**Step 2: Run test to verify it fails**
+
+```bash
+cargo test -p agora-p2p probe_returns_none -v
+```
+
+Expected: FAIL — module not found
+
+**Step 3: Implement**
+
+Create `agora-p2p/src/transport/yggdrasil.rs`:
+
+```rust
+//! Yggdrasil transport adapter for agora-p2p.
+//!
+//! Strategy:
+//! 1. Probe for a running Yggdrasil daemon via its admin socket.
+//! 2. If found, query the daemon for this node's Yggdrasil IPv6 address.
+//! 3. Bind the QUIC endpoint to that IPv6 address.
+//! 4. If no daemon, return None and let P2pNode fall back to QUIC on 0.0.0.0.
+
+use std::net::{Ipv6Addr, SocketAddr};
+use std::path::{Path, PathBuf};
+
+use ed25519_dalek::VerifyingKey;
+
+use crate::identity::yggdrasil::yggdrasil_addr_from_pubkey;
+use crate::types::YggdrasilConfig;
+
+/// Returns the platform-default Yggdrasil admin socket path.
+pub fn default_admin_socket_path() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("Library/Application Support/yggdrasil/admin.sock")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        PathBuf::from("/var/run/yggdrasil.sock")
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        PathBuf::from("/tmp/yggdrasil.sock")
+    }
+}
+
+/// Probe for a running Yggdrasil daemon and return the local Yggdrasil address if found.
+///
+/// Returns `None` if the daemon is not running or not reachable.
+/// This function must never panic — it is called at startup and failure
+/// simply means we fall back to raw QUIC.
+pub fn probe_yggdrasil_daemon(admin_socket: Option<&Path>) -> Option<Ipv6Addr> {
+    let socket_path = admin_socket
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(default_admin_socket_path);
+
+    // Attempt to connect to the admin socket.
+    // Yggdrasil admin API uses a simple JSON protocol over Unix domain sockets.
+    use std::os::unix::net::UnixStream;
+    use std::io::{Read, Write};
+    use std::time::Duration;
+
+    let mut stream = UnixStream::connect(&socket_path).ok()?;
+    stream.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
+
+    // Send "getself" request to get this node's address
+    let request = r#"{"keepalive":false,"request":"getself"}"#;
+    stream.write_all(request.as_bytes()).ok()?;
+    stream.write_all(b"\n").ok()?;
+
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+
+    // Parse the "address" field from the JSON response
+    // Expected: {"request":"getself","response":{"address":"200:...","...":"..."}}
+    parse_yggdrasil_address(&response)
+}
+
+/// Parse Yggdrasil IPv6 address from the daemon's getself JSON response.
+fn parse_yggdrasil_address(json: &str) -> Option<Ipv6Addr> {
+    // Minimal parsing — find `"address":"<addr>"` pattern
+    let key = r#""address":""#;
+    let start = json.find(key)? + key.len();
+    let end = json[start..].find('"')? + start;
+    let addr_str = &json[start..end];
+    addr_str.parse().ok()
+}
+
+/// Determine the bind address for agora-p2p given the transport config and agent key.
+///
+/// Returns:
+/// - `Some(SocketAddr)` with the Yggdrasil IPv6 address if the daemon is running
+/// - `None` if Yggdrasil is unavailable (caller should fall back to QUIC on 0.0.0.0)
+pub fn resolve_yggdrasil_bind_addr(
+    config: &YggdrasilConfig,
+    _verifying_key: &VerifyingKey,
+) -> Option<SocketAddr> {
+    let ygg_addr = probe_yggdrasil_daemon(config.admin_socket.as_deref())?;
+    Some(SocketAddr::new(std::net::IpAddr::V6(ygg_addr), config.listen_port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_returns_none_when_no_daemon() {
+        // In CI / test environment, no Yggdrasil daemon is running.
+        let result = probe_yggdrasil_daemon(Some(Path::new("/nonexistent/socket")));
+        assert!(result.is_none(), "should return None when socket doesn't exist");
+    }
+
+    #[test]
+    fn yggdrasil_config_default_socket_path() {
+        let path = default_admin_socket_path();
+        assert!(path.to_string_lossy().len() > 0);
+    }
+
+    #[test]
+    fn parse_yggdrasil_address_valid() {
+        let json = r#"{"request":"getself","response":{"address":"200:1234:5678:abcd::1","subnet":"200:1234:5678:abcd::/64"}}"#;
+        let addr = parse_yggdrasil_address(json);
+        assert!(addr.is_some(), "should parse valid Yggdrasil address");
+        assert_eq!(addr.unwrap().octets()[0], 0x02);
+    }
+
+    #[test]
+    fn parse_yggdrasil_address_malformed() {
+        let result = parse_yggdrasil_address("not json");
+        assert!(result.is_none());
+    }
+}
+```
+
+Expose from `agora-p2p/src/transport/mod.rs`:
+
+```rust
+pub mod yggdrasil;
+pub use yggdrasil::{probe_yggdrasil_daemon, resolve_yggdrasil_bind_addr, default_admin_socket_path};
+```
+
+**Step 4: Run tests**
+
+```bash
+cargo test -p agora-p2p transport::yggdrasil -v
+```
+
+Expected: PASS (all 4 tests)
+
+**Step 5: Commit**
+
+```bash
+git add agora-p2p/src/transport/yggdrasil.rs agora-p2p/src/transport/mod.rs
+git commit -m "feat(agora-p2p): add Yggdrasil transport adapter with daemon probe"
+```
+
+---
+
+### Task 15: Wire `TransportMode::Auto` into `P2pNode::start()`
+
+**Files:**
+- Modify: `agora-p2p/src/node.rs`
+
+**Step 1: Locate the start method**
+
+Find `P2pNode::start()` or `P2pNode::new()` in `node.rs`. The current code likely calls `QuicTransport::new(config.listen_port)` unconditionally.
+
+**Step 2: Write the failing test**
+
+```rust
+#[tokio::test]
+async fn p2p_node_starts_with_auto_mode() {
+    use agora_crypto::AgentId;
+    let config = P2pConfig {
+        agent_id: AgentId::from_bytes([1u8; 32]),
+        service_name: "test".to_string(),
+        listen_port: 0,
+        transport: TransportMode::Auto,
+    };
+    // Should start without panicking even without a Yggdrasil daemon
+    let node = P2pNode::start(config).await;
+    assert!(node.is_ok(), "P2pNode::start must succeed with Auto mode (falls back to QUIC)");
+    node.unwrap().shutdown().await;
+}
+```
+
+**Step 3: Implement `TransportMode` selection in `P2pNode::start()`**
+
+In `agora-p2p/src/node.rs`, find where `QuicTransport` is created and add the mode switch:
+
+```rust
+use crate::transport::yggdrasil::resolve_yggdrasil_bind_addr;
+use crate::types::TransportMode;
+
+// In P2pNode::start():
+let bind_addr = match &config.transport {
+    TransportMode::Yggdrasil(ygg_config) => {
+        match resolve_yggdrasil_bind_addr(ygg_config, &verifying_key) {
+            Some(addr) => {
+                tracing::info!("Yggdrasil transport: binding to {}", addr);
+                addr
+            }
+            None => {
+                tracing::warn!(
+                    "Yggdrasil daemon not found at {:?}, falling back to QUIC on LAN",
+                    ygg_config.admin_socket
+                );
+                SocketAddr::from(([0, 0, 0, 0], config.listen_port))
+            }
+        }
+    }
+    TransportMode::Quic(quic_config) => {
+        SocketAddr::from(([0, 0, 0, 0], quic_config.listen_port))
+    }
+    TransportMode::Auto => {
+        let ygg_config = YggdrasilConfig { admin_socket: None, listen_port: config.listen_port };
+        match resolve_yggdrasil_bind_addr(&ygg_config, &verifying_key) {
+            Some(addr) => {
+                tracing::info!("TransportMode::Auto: Yggdrasil daemon found, binding to {}", addr);
+                addr
+            }
+            None => {
+                tracing::info!("TransportMode::Auto: no Yggdrasil daemon, using QUIC on LAN");
+                SocketAddr::from(([0, 0, 0, 0], config.listen_port))
+            }
+        }
+    }
+};
+
+// Then pass bind_addr to QuicTransport instead of just the port
+let transport = QuicTransport::bind(bind_addr, &tls_config).await?;
+```
+
+**Note on `FingerprintVerifier`:** When `bind_addr` is a Yggdrasil IPv6 address, the Yggdrasil network layer already authenticates peers cryptographically. The `FingerprintVerifier` machinery can be bypassed in this path. It is not removed in this task (to minimize diff size), but mark it:
+
+```rust
+// IMPLEMENTATION_REQUIRED: Remove FingerprintVerifier when Yggdrasil transport is active.
+// Yggdrasil authenticates peers at the network layer via their public key derivation.
+// FingerprintVerifier is only needed for raw QUIC (LAN-only mode).
+```
+
+**Step 4: Run tests**
+
+```bash
+cargo test -p agora-p2p p2p_node_starts_with_auto_mode -v
+```
+
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add agora-p2p/src/node.rs
+git commit -m "feat(agora-p2p): wire TransportMode::Auto into P2pNode::start() with Yggdrasil probe"
+```
+
+---
+
+### Task 16: Remove `FingerprintVerifier` and `rcgen` dependency
+
+> **Only execute this task when running in Yggdrasil mode.** The fingerprint machinery remains for QUIC/LAN fallback. This task removes it when the Yggdrasil path is stable and tested.
+
+**Files:**
+- Modify: `agora-p2p/src/transport/quic.rs`
+- Modify: `agora-p2p/Cargo.toml`
+
+**Step 1: Verify all tests still pass before removing**
+
+```bash
+cargo test -p agora-p2p -v
+```
+
+Expected: all existing tests pass
+
+**Step 2: Remove `FingerprintVerifier` from the Yggdrasil transport path**
+
+In `agora-p2p/src/transport/quic.rs`, add a conditional:
+
+```rust
+// When bind address is Yggdrasil (IPv6 starting with 0x02), skip fingerprint verification.
+// Yggdrasil guarantees peer identity at the network layer.
+fn is_yggdrasil_addr(addr: &std::net::SocketAddr) -> bool {
+    match addr.ip() {
+        std::net::IpAddr::V6(v6) => v6.octets()[0] == 0x02,
+        _ => false,
+    }
+}
+```
+
+Mark `FingerprintVerifier` and `FingerprintStore` as deprecated:
+
+```rust
+/// Transport-layer peer verification via TLS certificate fingerprinting.
+/// 
+/// # Deprecation
+/// This is used only in QUIC/LAN mode. When Yggdrasil transport is active,
+/// peer identity is guaranteed by Yggdrasil's address derivation.
+/// `FingerprintVerifier` will be removed when LAN-only mode is removed.
+#[deprecated(note = "Use Yggdrasil transport for peer verification")]
+pub struct FingerprintVerifier { ... }
+```
+
+**Step 3: Remove `rcgen` if no longer needed**
+
+Check if `rcgen` is used outside fingerprint machinery:
+
+```bash
+grep -r "rcgen" /Users/netu/Projects/KOS/agora/agora-p2p/src/
+```
+
+If only in TLS cert generation for `FingerprintVerifier`, remove from `Cargo.toml`.
+
+**Step 4: Run all tests**
+
+```bash
+cargo test -p agora-p2p -v
+```
+
+Expected: all tests pass, no `rcgen` compile errors
+
+**Step 5: Commit**
+
+```bash
+git add agora-p2p/src/transport/quic.rs agora-p2p/Cargo.toml
+git commit -m "refactor(agora-p2p): deprecate FingerprintVerifier; Yggdrasil handles peer auth at network layer"
+```
+
+---
+
+### Task 17: Integration Test — Two Yggdrasil Nodes Exchange AmpMessage
+
+> **This test requires two machines with Yggdrasil daemon installed, OR a test harness that simulates the Yggdrasil interface.** Document it here for when the environment is available. A simulated version using the LAN fallback can run in CI.
+
+**Step 1: Write the CI-safe integration test (LAN fallback)**
+
+```rust
+// In agora-p2p/tests/yggdrasil_integration.rs
+// This test uses Auto mode — will use QUIC/LAN in CI, Yggdrasil when daemon is present.
+
+#[tokio::test]
+async fn two_auto_mode_nodes_exchange_message() {
+    use agora_crypto::{AgentId, AgentIdentity};
+
+    let id_a = AgentIdentity::generate();
+    let id_b = AgentIdentity::generate();
+
+    let config_a = P2pConfig {
+        agent_id: id_a.agent_id(),
+        service_name: "test-ygg".to_string(),
+        listen_port: 0,
+        transport: TransportMode::Auto,
+    };
+    let config_b = P2pConfig {
+        agent_id: id_b.agent_id(),
+        service_name: "test-ygg".to_string(),
+        listen_port: 0,
+        transport: TransportMode::Auto,
+    };
+
+    let node_a = P2pNode::start(config_a).await.expect("node A start");
+    let node_b = P2pNode::start(config_b).await.expect("node B start");
+
+    let addr_a = node_a.local_addr().expect("node A addr");
+
+    // B connects to A directly (bypasses mDNS for test speed)
+    node_b.connect_to(id_a.agent_id(), addr_a).await.expect("connect");
+
+    // A sends a message to B
+    let payload = b"hello from A".to_vec();
+    node_a.send_to(id_b.agent_id(), payload.clone()).await.expect("send");
+
+    // B receives it
+    let received = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        node_b.next_message(),
+    ).await.expect("timeout").expect("message");
+
+    assert_eq!(received.payload, payload);
+
+    node_a.shutdown().await;
+    node_b.shutdown().await;
+}
+```
+
+**Step 2: Run the test**
+
+```bash
+cargo test -p agora-p2p two_auto_mode_nodes -v
+```
+
+Expected: PASS (uses QUIC/LAN in CI since no Yggdrasil daemon)
+
+**Step 3: Verify transport mode in log output**
+
+```bash
+RUST_LOG=agora_p2p=info cargo test -p agora-p2p two_auto_mode_nodes -- --nocapture
+```
+
+Expected log output:
+```
+INFO agora_p2p::node: TransportMode::Auto: no Yggdrasil daemon, using QUIC on LAN
+```
+
+**Step 4: Final commit for Yggdrasil phase**
+
+```bash
+git add agora-p2p/tests/
+git commit -m "test(agora-p2p): add two-node Auto-mode integration test for Yggdrasil/QUIC transport"
+```
+
+---
+
+### Phase 6 Checklist
+
+- [ ] Task 12: `TransportMode` enum and `YggdrasilConfig` types committed
+- [ ] Task 13: `yggdrasil_addr_from_pubkey` with 3 passing tests committed
+- [ ] Task 14: `YggdrasilTransport` daemon probe — 4 passing tests committed
+- [ ] Task 15: `P2pNode::start()` wired with `TransportMode` selection committed
+- [ ] Task 16: `FingerprintVerifier` deprecated in Yggdrasil path committed
+- [ ] Task 17: Integration test — two Auto-mode nodes exchange message committed
+- [ ] `cargo test -p agora-p2p` passes with no warnings
+
+**After Phase 6:** Move to Atelier Phase 2 (`docs/plans/grand-plan-alignment.md` — wire `surface.rs:45`).
+
