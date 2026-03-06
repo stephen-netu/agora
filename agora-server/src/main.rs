@@ -228,9 +228,20 @@ async fn main() -> anyhow::Result<()> {
         media_path,
         max_upload_bytes: config.media.max_upload_bytes,
         typing: Default::default(),
+        presence: crate::store::presence::new_presence_state(),
         timestamp: timestamp.into_arc(),
         token_secret,
     };
+
+    // Start background task to clean up stale presence entries every 5 minutes
+    let presence_cleanup_state = app_state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            crate::api::presence::cleanup_stale_presence(&presence_cleanup_state).await;
+        }
+    });
 
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)

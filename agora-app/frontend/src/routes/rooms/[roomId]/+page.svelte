@@ -9,7 +9,7 @@
 	import MessageInput from '$lib/components/MessageInput.svelte';
 	import InviteUserModal from '$lib/components/InviteUserModal.svelte';
 
-	let roomId = $derived(decodeURIComponent(page.params.roomId));
+	let roomId = $derived(decodeURIComponent(page.params.roomId ?? ''));
 
 	let allRooms = $state(new Map<string, Room>());
 	rooms.subscribe((map) => { allRooms = map; });

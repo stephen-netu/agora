@@ -54,7 +54,7 @@
 - [x] Room creation — FIXED: stream_ordering NOT NULL constraint not being met
 - [x] Timestamp sequence persistence — FIXED: sequence wasn't resuming after server restarts (missing room_members and sigchain_links in query)
 - [ ] Verify image rendering works end-to-end in encrypted and unencrypted rooms
-- [ ] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
+- [x] Document known E2E limitation: encrypted rooms require Agora clients (not Element-compatible)
 
 ---
 

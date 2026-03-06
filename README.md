@@ -146,6 +146,15 @@ Agora implements the following Matrix Client-Server API endpoints:
 
 ## End-to-End Encryption
 
+> **⚠️ WARNING: Not Compatible with Element/Other Matrix Clients**
+>
+> Agora uses custom E2E encryption algorithms (`m.agora.pairwise.v1`, `m.agora.group.v1`) that are **fundamentally incompatible** with standard Matrix Olm/Megolm used by Element, Element-X, FluffyChat, and other Matrix clients.
+>
+> - **Encrypted rooms**: Only readable by Agora clients (`agora-app`, `agora-cli`)
+> - **Unencrypted rooms**: Fully compatible with all Matrix clients
+>
+> See [docs/E2E.md](./docs/E2E.md) for detailed technical explanation.
+
 Agora uses its own cryptographic implementation (`agora-crypto`) built from audited primitives:
 
 - **Pairwise sessions** — X3DH key agreement followed by a Double Ratchet (Signal spec) using X25519 + ChaCha20-Poly1305 + BLAKE3/HKDF. Algorithm identifier: `m.agora.pairwise.v1`.

@@ -4,6 +4,8 @@
 	import { auth } from '$lib/stores/auth';
 	import { decryptEvent } from '$lib/crypto';
 	import MediaMessage from './MediaMessage.svelte';
+	import Reactions from './Reactions.svelte';
+	import MessageHoverMenu from './MessageHoverMenu.svelte';
 
 	interface Props {
 		messages: RoomEvent[];
@@ -24,16 +26,56 @@
 	auth.subscribe((v) => (authState = v));
 
 	let decryptedCache = $state(new Map<string, { type: string; content: Record<string, unknown> } | null>());
+	let decryptingInProgress = $state(new Set<string>());
+	let profileCache = $state(new Map<string, { displayname?: string; avatar_url?: string }>());
+	let fetchingProfiles = $state(new Set<string>());
 
+	// Fetch profiles for message senders
 	$effect(() => {
 		for (const event of messages) {
-			if (event.type === 'm.room.encrypted' && !decryptedCache.has(event.event_id)) {
+			if (!profileCache.has(event.sender) && !fetchingProfiles.has(event.sender)) {
+				fetchingProfiles.add(event.sender);
+				fetchingProfiles = new Set(fetchingProfiles);
+				api.getProfile(event.sender).then((profile) => {
+					profileCache.set(event.sender, profile);
+					profileCache = new Map(profileCache);
+				}).catch(() => {
+					profileCache.set(event.sender, {});
+					profileCache = new Map(profileCache);
+				}).finally(() => {
+					fetchingProfiles.delete(event.sender);
+					fetchingProfiles = new Set(fetchingProfiles);
+				});
+			}
+		}
+	});
+
+	function getAvatarUrl(sender: string): string | null {
+		const profile = profileCache.get(sender);
+		if (!profile?.avatar_url) return null;
+		return api.downloadUrl(profile.avatar_url);
+	}
+
+	function getDisplayName(sender: string): string {
+		const profile = profileCache.get(sender);
+		if (profile?.displayname) return profile.displayname;
+		return senderName(sender);
+	}
+
+	// Trigger decryption for encrypted events
+	$effect(() => {
+		const cache = decryptedCache; // Access for tracking
+		for (const event of messages) {
+			if (event.type === 'm.room.encrypted' && !cache.has(event.event_id) && !decryptingInProgress.has(event.event_id)) {
 				tryDecrypt(event);
 			}
 		}
 	});
 
 	async function tryDecrypt(event: RoomEvent) {
+		decryptingInProgress.add(event.event_id);
+		decryptingInProgress = new Set(decryptingInProgress);
+
 		const content = event.content;
 		const senderKey = content.sender_key as string;
 		const sessionId = content.session_id as string;
@@ -43,23 +85,34 @@
 		if (!senderKey || !sessionId || !ciphertext) {
 			decryptedCache.set(event.event_id, null);
 			decryptedCache = new Map(decryptedCache);
+			decryptingInProgress.delete(event.event_id);
+			decryptingInProgress = new Set(decryptingInProgress);
 			return;
 		}
 
-		const result = await decryptEvent(roomId, senderKey, sessionId, ciphertext);
-		if (result) {
-			decryptedCache.set(event.event_id, { type: result.type, content: result.content });
-		} else {
+		try {
+			const result = await decryptEvent(roomId, senderKey, sessionId, ciphertext);
+			if (result) {
+				decryptedCache.set(event.event_id, { type: result.type, content: result.content });
+			} else {
+				decryptedCache.set(event.event_id, null);
+			}
+		} catch {
 			decryptedCache.set(event.event_id, null);
 		}
 		decryptedCache = new Map(decryptedCache);
+		decryptingInProgress.delete(event.event_id);
+		decryptingInProgress = new Set(decryptingInProgress);
 	}
 
 	function getDisplayEvent(event: RoomEvent): { type: string; content: Record<string, unknown> } {
 		if (event.type === 'm.room.encrypted') {
 			const cached = decryptedCache.get(event.event_id);
 			if (cached) return cached;
-			return { type: 'm.room.encrypted', content: { body: 'Unable to decrypt' } };
+			if (cached === null) {
+				return { type: 'm.room.encrypted', content: { body: 'Unable to decrypt' } };
+			}
+			return { type: 'm.room.encrypted', content: { body: 'Decrypting...' } };
 		}
 		return { type: event.type, content: event.content };
 	}
@@ -93,7 +146,14 @@
 	function isEncryptedUndecrypted(event: RoomEvent): boolean {
 		if (event.type !== 'm.room.encrypted') return false;
 		const cached = decryptedCache.get(event.event_id);
+		// Only return true if explicitly failed (null), not if still decrypting (undefined)
 		return cached === null;
+	}
+
+	function isDecrypting(event: RoomEvent): boolean {
+		if (event.type !== 'm.room.encrypted') return false;
+		const cached = decryptedCache.get(event.event_id);
+		return cached === undefined;
 	}
 
 	function sigchainSeqno(display: { type: string; content: Record<string, unknown> }): number | null {
@@ -114,15 +174,23 @@
 	{#each messages as event (event.event_id)}
 		{@const display = getDisplayEvent(event)}
 		{@const seqno = sigchainSeqno(display)}
-		{#if isTextMessage(display) || isMediaMessage(display) || isEncryptedUndecrypted(event)}
+		{#if isTextMessage(display) || isMediaMessage(display) || isEncryptedUndecrypted(event) || isDecrypting(event)}
 			<div
 				class="message"
 				class:own={event.sender === authState.userId}
 				class:encrypted-msg={event.type === 'm.room.encrypted'}
 				class:pinned={isPinned(event.event_id)}
 			>
-				<div class="message-header">
-					<span class="sender">{senderName(event.sender)}</span>
+				<div class="message-avatar">
+					{#if getAvatarUrl(event.sender)}
+						<img src={getAvatarUrl(event.sender)} alt={getDisplayName(event.sender)} />
+					{:else}
+						<div class="avatar-fallback">{getDisplayName(event.sender).charAt(0).toUpperCase()}</div>
+					{/if}
+				</div>
+				<div class="message-content-wrapper">
+					<div class="message-header">
+						<span class="sender">{getDisplayName(event.sender)}</span>
 					{#if isPinned(event.event_id)}
 						<span class="pin-badge" title="Pinned">&#128204;</span>
 					{/if}
@@ -141,26 +209,29 @@
 						{/if}
 					</span>
 				</div>
-				{#if isEncryptedUndecrypted(event)}
+				{#if isDecrypting(event)}
+					<div class="message-body decrypting">Decrypting...</div>
+				{:else if isEncryptedUndecrypted(event)}
 					<div class="message-body undecryptable">Unable to decrypt</div>
 				{:else if isMediaMessage(display)}
 					<MediaMessage event={{ ...event, type: display.type, content: display.content }} />
-				{:else}
-					<div class="message-body">
-						{display.content.body ?? ''}
-					</div>
-				{/if}
+					{:else}
+						<div class="message-body">
+							{display.content.body ?? ''}
+						</div>
+					{/if}
+				</div>
 			</div>
 		{:else if event.type === 'm.room.member'}
 			<div class="system-message">
 				{#if event.content.membership === 'invite'}
-					{senderName(event.sender)} invited {senderName(event.state_key ?? '')}
+					{getDisplayName(event.sender)} invited {getDisplayName(event.state_key ?? '')}
 				{:else if event.content.membership === 'join'}
-					{senderName(event.state_key ?? event.sender)} joined
+					{getDisplayName(event.state_key ?? event.sender)} joined
 				{:else if event.content.membership === 'ban'}
-					{senderName(event.state_key ?? '')} was banned by {senderName(event.sender)}
+					{getDisplayName(event.state_key ?? '')} was banned by {getDisplayName(event.sender)}
 				{:else}
-					{senderName(event.state_key ?? event.sender)} left
+					{getDisplayName(event.state_key ?? event.sender)} left
 				{/if}
 			</div>
 		{/if}
@@ -183,6 +254,9 @@
 		background: var(--surface);
 		border-radius: 12px;
 		border-top-left-radius: 4px;
+		display: flex;
+		gap: 12px;
+		align-items: flex-start;
 	}
 
 	.message.own {
@@ -265,10 +339,47 @@
 		color: var(--text-muted);
 	}
 
+	.decrypting {
+		font-style: italic;
+		color: var(--text-muted);
+		opacity: 0.7;
+	}
+
 	.system-message {
 		text-align: center;
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		padding: 4px 0;
+	}
+
+	.message-avatar {
+		width: 36px;
+		height: 36px;
+		flex-shrink: 0;
+	}
+
+	.message-avatar img {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.avatar-fallback {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		background: var(--surface-hover);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--accent);
+	}
+
+	.message-content-wrapper {
+		flex: 1;
+		min-width: 0;
 	}
 </style>
