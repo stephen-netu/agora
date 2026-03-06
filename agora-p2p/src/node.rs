@@ -3,10 +3,11 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{info, debug};
+use tracing::{info, warn};
 
+use agora_crypto::AgentId;
 use crate::error::Error;
-use crate::types::Config;
+use crate::types::{Config, Peer};
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
 use crate::discovery::mdns::{MdnsDiscovery, MdnsPeerEvent};
 use crate::protocol::{AmpMessage, SerializedEvent};
@@ -77,16 +78,53 @@ impl P2pNode {
         
         info!("mDNS discovery started for {}", self.config.agent_id);
         
+        self.spawn_incoming_handler();
+        
         self.spawn_event_handlers(discovery_events).await;
         
         Ok(())
+    }
+    
+    fn spawn_incoming_handler(&self) {
+        let transport = self.transport.clone();
+        let mesh = self.mesh.clone();
+        let mesh_events_tx = self.mesh_events_tx.clone();
+        
+        tokio::spawn(async move {
+            info!("Incoming connection handler started");
+            loop {
+                match transport.accept().await {
+                    Ok((connection, peer_id)) => {
+                        let peer_id_str = peer_id.to_string();
+                        info!("Accepted incoming connection from {} ({})", peer_id_str, connection.remote_addr);
+                        
+                        let peer = Peer {
+                            agent_id: peer_id,
+                            addresses: vec![connection.remote_addr.to_string()],
+                        };
+                        
+                        mesh.handle_incoming(peer).await;
+                        
+                        let _ = mesh_events_tx.send(MeshEvent::Connected(peer_id_str)).await;
+                    }
+                    Err(e) => {
+                        if !e.to_string().contains("channel closed") {
+                            warn!("Error accepting incoming connection: {}", e);
+                        } else {
+                            info!("Incoming connection handler: channel closed, stopping");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
     }
     
     async fn spawn_event_handlers(
         &self,
         mut discovery_events: mpsc::Receiver<MdnsPeerEvent>,
     ) {
-        let transport = self.transport.clone();
+        let mesh = self.mesh.clone();
         let mesh_events_tx = self.mesh_events_tx.clone();
         
         tokio::spawn(async move {
@@ -97,28 +135,18 @@ impl P2pNode {
                             MdnsPeerEvent::PeerDiscovered(peer) => {
                                 info!("Discovered peer: {}", peer.agent_id);
                                 
-                                // Guard against duplicate connections - check if already connected
-                                if transport.get_connection(&peer.agent_id).await.is_some() {
-                                    debug!("Already connected to peer {}, skipping connect", peer.agent_id);
-                                    continue;
-                                }
-                                
-                                if let Some(addr_str) = peer.addresses.first() {
-                                    if let Ok(addr) = addr_str.parse::<SocketAddr>() {
-                                        match transport.connect(addr, &peer.agent_id, None).await {
-                                            Ok(_) => {
-                                                let _ = mesh_events_tx.send(MeshEvent::Connected(peer.agent_id.to_string())).await;
-                                            }
-                                            Err(e) => {
-                                                let err_str = e.to_string();
-                                                let _ = mesh_events_tx.send(MeshEvent::Error(peer.agent_id.to_string(), err_str)).await;
-                                            }
-                                        }
-                                    }
+                                if let Err(e) = mesh.try_connect(&peer).await {
+                                    let err_str = e.to_string();
+                                    let _ = mesh_events_tx.send(MeshEvent::Error(peer.agent_id.to_string(), err_str)).await;
                                 }
                             }
                             MdnsPeerEvent::PeerRemoved(agent_id) => {
                                 info!("Peer removed: {}", agent_id);
+                                let peer_id = AgentId::from_hex(&agent_id)
+                                    .unwrap_or_else(|_| {
+                                        AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
+                                    });
+                                mesh.disconnect(&peer_id).await;
                                 let _ = mesh_events_tx.send(MeshEvent::Disconnected(agent_id.clone())).await;
                             }
                             MdnsPeerEvent::PeerUpdated(peer) => {

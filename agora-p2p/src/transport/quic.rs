@@ -47,7 +47,7 @@ pub struct QuicTransport {
     agent_id: AgentId,
     fingerprint_store: FingerprintStore,
     connections: Arc<RwLock<HashMap<AgentId, QuicConnection>>>,
-    incoming_connections: mpsc::Receiver<Incoming>,
+    incoming_sender: mpsc::Sender<mpsc::Sender<Incoming>>,
 }
 
 pub fn generate_self_signed_cert(agent_id: &AgentId) -> Result<(CertificateDer<'static>, PrivateKeyDer<'static>), Error> {
@@ -124,23 +124,25 @@ impl QuicTransport {
         
         let endpoint = Endpoint::server(server_config, "0.0.0.0:0".parse().map_err(|e: std::net::AddrParseError| Error::Transport(e.to_string()))?)?;
         
-        let (tx, incoming_connections) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::channel::<mpsc::Sender<Incoming>>(100);
         
         let incoming = endpoint.clone();
         tokio::spawn(async move {
             loop {
-                match incoming.accept().await {
-                    Some(connecting) => {
-                        let tx = tx.clone();
-                        tokio::spawn(async move {
-                            if tx.send(connecting).await.is_err() {
-                                error!("failed to send incoming connection to channel");
+                tokio::select! {
+                    Some(request_tx) = rx.recv() => {
+                        match incoming.accept().await {
+                            Some(connecting) => {
+                                if request_tx.send(connecting).await.is_err() {
+                                    debug!("failed to send incoming connection to requestor");
+                                }
                             }
-                        });
+                            None => {
+                                break;
+                            }
+                        }
                     }
-                    None => {
-                        break;
-                    }
+                    else => break,
                 }
             }
         });
@@ -153,7 +155,7 @@ impl QuicTransport {
             agent_id,
             fingerprint_store: FingerprintStore::new(),
             connections: Arc::new(RwLock::new(HashMap::new())),
-            incoming_connections,
+            incoming_sender: tx,
         })
     }
     
@@ -203,12 +205,17 @@ impl QuicTransport {
         self.connections.read().await.keys().cloned().collect()
     }
     
-    pub async fn accept(&mut self) -> Result<(QuicConnection, AgentId), Error> {
-        let incoming = self.incoming_connections.recv().await
+    pub async fn accept(&self) -> Result<(QuicConnection, AgentId), Error> {
+        let (tx, mut rx) = mpsc::channel(1);
+        self.incoming_sender.send(tx).await.map_err(|_| Error::Transport("incoming channel closed".to_string()))?;
+        
+        let incoming = rx.recv().await
             .ok_or_else(|| Error::Transport("connection channel closed".to_string()))?;
         
-        let connection = incoming.await
-            .map_err(|e| Error::Transport(e.to_string()))?;
+        let connection: Connection = match incoming.await {
+            Ok(conn) => conn,
+            Err(e) => return Err(Error::Transport(format!("connection failed: {}", e))),
+        };
         
         let addr = connection.remote_address();
         
