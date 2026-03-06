@@ -13,26 +13,26 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
-ciborium = "0.2"
+ciborium = { workspace = true }
 
 # QUIC transport - force aws-lc-rs
-quinn = { version = "0.11", features = ["aws-lc-rs"] }
+quinn = { workspace = true, default-features = false, features = ["aws-lc-rs", "runtime-tokio"] }
 
 # TLS - use aws-lc-rs explicitly
-rustls = { version = "0.23", features = ["aws-lc-rs"] }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 # Certificate generation  
-rcgen = { version = "0.13", features = ["crypto"] }
-blake3 = "1"
+rcgen = { workspace = true, default-features = false, features = ["aws_lc_rs", "crypto"] }
+blake3 = { workspace = true }
 
 # Utilities
-futures = "0.3"
-bytes = "1"
-pin-project-lite = "0.2"
-rand = "0.9"
+futures = { workspace = true }
+bytes = { workspace = true }
+pin-project-lite = { workspace = true }
+rand = { workspace = true }
 
 # mDNS discovery
-mdns-sd = "0.12"
+mdns-sd = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

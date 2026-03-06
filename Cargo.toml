@@ -27,6 +27,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 anyhow = "1"
 async-trait = "0.1"
+ciborium = "0.2"
+quinn = { version = "0.11", features = ["aws-lc-rs"] }
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+rcgen = { version = "0.13", features = ["crypto"] }
+blake3 = "1"
+futures = "0.3"
+bytes = "1"
+pin-project-lite = "0.2"
+rand = "0.9"
+mdns-sd = "0.12"
 
 [workspace.lints.rust]
 missing_docs = "warn"
