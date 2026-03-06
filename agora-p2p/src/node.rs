@@ -105,7 +105,7 @@ impl P2pNode {
                             addresses: vec![connection.remote_addr.to_string()],
                         };
                         
-                        mesh.handle_incoming(peer).await;
+                        mesh.handle_incoming(peer, connection).await;
                         
                         let _ = mesh_events_tx.send(MeshEvent::Connected(peer_id_str)).await;
                     }

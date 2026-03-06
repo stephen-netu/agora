@@ -156,7 +156,7 @@ impl MeshManager {
         }
     }
 
-    pub async fn handle_incoming(&self, peer: Peer) {
+    pub async fn handle_incoming(&self, peer: Peer, connection: QuicConnection) {
         let peer_id = peer.agent_id.clone();
         let events = self.events.clone();
         let connections = self.connections.clone();
@@ -165,31 +165,24 @@ impl MeshManager {
             return;
         }
 
-        match self.transport.accept().await {
-            Ok((connection, _)) => {
-                match connection.connection.accept_bi().await {
-                    Ok((send, recv)) => {
-                        let connected_peer = ConnectedPeer {
-                            peer: peer.clone(),
-                            sender: send,
-                            connection: connection.clone(),
-                        };
+        match connection.connection.accept_bi().await {
+            Ok((send, recv)) => {
+                let connected_peer = ConnectedPeer {
+                    peer: peer.clone(),
+                    sender: send,
+                    connection: connection.clone(),
+                };
 
-                        connections.write().await.insert(peer_id.clone(), connected_peer);
+                connections.write().await.insert(peer_id.clone(), connected_peer);
 
-                        let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
+                let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
 
-                        tokio::spawn(async move {
-                            Self::read_messages_from_stream(peer_id, recv, events).await;
-                        });
-                    }
-                    Err(e) => {
-                        let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept bi error: {}", e))).await;
-                    }
-                }
+                tokio::spawn(async move {
+                    Self::read_messages_from_stream(peer_id, recv, events).await;
+                });
             }
             Err(e) => {
-                let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept error: {}", e))).await;
+                let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept bi error: {}", e))).await;
             }
         }
     }
