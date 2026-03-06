@@ -15,12 +15,14 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 ciborium = "0.2"
 
-# QUIC transport
-quinn = "0.11"
+# QUIC transport - force aws-lc-rs
+quinn = { version = "0.11", features = ["aws-lc-rs"] }
 
-# TLS
-rustls = { version = "0.23", features = ["ring"] }
-rcgen = "0.13"
+# TLS - use aws-lc-rs explicitly
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+
+# Certificate generation  
+rcgen = { version = "0.13", features = ["crypto"] }
 blake3 = "1"
 
 # Utilities

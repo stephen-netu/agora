@@ -29,7 +29,7 @@ impl Default for Config {
             )
             .unwrap(),
             listen_port: 0,
-            service_name: "_agora._udp.local".to_string(),
+            service_name: "_agora._udp.local.".to_string(),
         }
     }
 }
