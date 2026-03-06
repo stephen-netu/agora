@@ -6,7 +6,7 @@
 //! Or specify a port:
 //!   cargo run --example p2p_chat -- --port 9000
 
-use agora_p2p::{P2pNode, Config};
+use agora_p2p::{P2pNode, Config, MeshEvent};
 use agora_crypto::AgentIdentity;
 use rand::Rng;
 use std::io::{self, Write};
@@ -40,7 +40,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = config.listen_port;
     let node = P2pNode::new(config).await?;
     node.start(port).await?;
-    
+
+    let mut node = node;
+    let mut events = node.take_mesh_events()
+        .expect("Failed to get mesh events");
+
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            match event {
+                MeshEvent::Connected(peer_id) => {
+                    println!("\n[Connected to {}]", peer_id);
+                    print!("> ");
+                    io::stdout().flush().ok();
+                }
+                MeshEvent::Disconnected(peer_id) => {
+                    println!("\n[Disconnected from {}]", peer_id);
+                    print!("> ");
+                    io::stdout().flush().ok();
+                }
+                MeshEvent::MessageReceived(peer_id, data) => {
+                    let msg = String::from_utf8_lossy(&data);
+                    println!("\n[{}]: {}", &peer_id[..8], msg);
+                    print!("> ");
+                    io::stdout().flush().ok();
+                }
+                MeshEvent::Error(peer_id, err) => {
+                    println!("\n[Error from {}]: {}", &peer_id[..8], err);
+                    print!("> ");
+                    io::stdout().flush().ok();
+                }
+            }
+        }
+    });
+
     let bound_addr = node.local_addr().await?;
     println!("Listening on port {}", bound_addr.port());
     println!("Waiting for peers on local network...");

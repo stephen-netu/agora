@@ -19,6 +19,7 @@ pub struct P2pNode {
     discovery: Arc<RwLock<Option<MdnsDiscovery>>>,
     mesh: Arc<MeshManager>,
     mesh_events_tx: mpsc::Sender<MeshEvent>,
+    mesh_events_rx: Option<mpsc::Receiver<MeshEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,7 +39,7 @@ impl P2pNode {
         let transport = QuicTransport::new(quic_config, config.agent_id.clone()).await?;
         let transport = Arc::new(transport);
         
-        let (mesh_events_tx, _mesh_events_rx) = mpsc::channel(100);
+        let (mesh_events_tx, mesh_events_rx) = mpsc::channel(100);
         
         let (mesh_internal_tx, _mesh_internal_rx) = mpsc::channel(100);
         
@@ -54,6 +55,7 @@ impl P2pNode {
             discovery: Arc::new(RwLock::new(None)),
             mesh,
             mesh_events_tx,
+            mesh_events_rx: Some(mesh_events_rx),
         })
     }
     
@@ -199,5 +201,9 @@ impl P2pNode {
     
     pub async fn local_addr(&self) -> Result<SocketAddr, Error> {
         self.transport.local_addr()
+    }
+    
+    pub fn take_mesh_events(&mut self) -> Option<mpsc::Receiver<MeshEvent>> {
+        self.mesh_events_rx.take()
     }
 }

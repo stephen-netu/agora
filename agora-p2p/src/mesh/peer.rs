@@ -2,16 +2,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use agora_crypto::AgentId;
+use quinn::{RecvStream, SendStream};
 use tokio::sync::{mpsc, RwLock};
 
 use crate::error::Error;
 use crate::types::Peer;
-use crate::transport::quic::QuicTransport;
-use crate::protocol::AmpMessage;
+use crate::transport::quic::{read_message, QuicConnection, QuicTransport};
+use crate::protocol::{decode, AmpMessage};
 
 pub struct ConnectedPeer {
     pub peer: Peer,
-    pub sender: quinn::SendStream,
+    pub sender: SendStream,
+    pub connection: QuicConnection,
 }
 
 #[derive(Debug, Clone)]
@@ -89,47 +91,107 @@ impl MeshManager {
         Ok(())
     }
 
-    async fn handle_new_connection(&self, peer: Peer, _connection: crate::transport::quic::QuicConnection) {
+    async fn handle_new_connection(&self, peer: Peer, connection: QuicConnection) {
         let peer_id = peer.agent_id.clone();
+        let events = self.events.clone();
+        let connections = self.connections.clone();
+        let local_id = self.local_id.clone();
 
-        match self.transport.open_stream(&peer_id).await {
-            Ok(mut stream) => {
+        match connection.connection.open_bi().await {
+            Ok((mut send, recv)) => {
                 let handshake = AmpMessage::Handshake {
-                    agent_id: self.local_id.to_string(),
+                    agent_id: local_id.to_string(),
                     version: 1,
                     capabilities: Default::default(),
                 };
 
                 if let Ok(bytes) = crate::protocol::encode(&handshake) {
-                    if let Err(e) = crate::transport::quic::write_message(&mut stream, &bytes).await {
-                        let _ = self.events.send(MeshEvent::Error(peer_id.clone(), e.to_string())).await;
+                    if let Err(e) = crate::transport::quic::write_message(&mut send, &bytes).await {
+                        let _ = events.send(MeshEvent::Error(peer_id.clone(), e.to_string())).await;
                         return;
                     }
                 }
 
-                let connected = ConnectedPeer {
-                    peer,
-                    sender: stream,
+                let connected_peer = ConnectedPeer {
+                    peer: peer.clone(),
+                    sender: send,
+                    connection: connection.clone(),
                 };
 
-                self.connections.write().await.insert(peer_id.clone(), connected);
+                connections.write().await.insert(peer_id.clone(), connected_peer);
 
-                let _ = self.events.send(MeshEvent::Connected(peer_id.clone())).await;
+                let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
+
+                tokio::spawn(async move {
+                    Self::read_messages_from_stream(peer_id, recv, events).await;
+                });
             }
             Err(e) => {
-                let _ = self.events.send(MeshEvent::Error(peer_id.clone(), e.to_string())).await;
+                let _ = events.send(MeshEvent::Error(peer_id.clone(), e.to_string())).await;
+            }
+        }
+    }
+
+    async fn read_messages_from_stream(peer_id: AgentId, mut recv: RecvStream, events: mpsc::Sender<MeshEvent>) {
+        loop {
+            match read_message(&mut recv).await {
+                Ok(bytes) => {
+                    match decode(&bytes) {
+                        Ok(message) => {
+                            let msg_str = format!("{:?}", message);
+                            if events.send(MeshEvent::MessageReceived(peer_id.clone(), msg_str)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("decode error: {}", e))).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("read error: {}", e))).await;
+                    break;
+                }
             }
         }
     }
 
     pub async fn handle_incoming(&self, peer: Peer) {
         let peer_id = peer.agent_id.clone();
+        let events = self.events.clone();
+        let connections = self.connections.clone();
 
         if self.connections.read().await.contains_key(&peer_id) {
             return;
         }
 
-        let _ = self.events.send(MeshEvent::Connected(peer_id)).await;
+        match self.transport.accept().await {
+            Ok((connection, _)) => {
+                match connection.connection.accept_bi().await {
+                    Ok((send, recv)) => {
+                        let connected_peer = ConnectedPeer {
+                            peer: peer.clone(),
+                            sender: send,
+                            connection: connection.clone(),
+                        };
+
+                        connections.write().await.insert(peer_id.clone(), connected_peer);
+
+                        let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
+
+                        tokio::spawn(async move {
+                            Self::read_messages_from_stream(peer_id, recv, events).await;
+                        });
+                    }
+                    Err(e) => {
+                        let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept bi error: {}", e))).await;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = events.send(MeshEvent::Error(peer_id.clone(), format!("accept error: {}", e))).await;
+            }
+        }
     }
 
     pub async fn send_to(&self, peer_id: &AgentId, message: AmpMessage) -> Result<(), Error> {
@@ -137,7 +199,11 @@ impl MeshManager {
             return Err(Error::Mesh("peer not connected".to_string()));
         }
 
-        let mut stream = self.transport.open_stream(peer_id).await
+        let connections = self.connections.read().await;
+        let connected_peer = connections.get(peer_id)
+            .ok_or_else(|| Error::Mesh("peer not found".to_string()))?;
+
+        let (mut stream, _) = connected_peer.connection.connection.open_bi().await
             .map_err(|e| Error::Mesh(e.to_string()))?;
 
         let bytes = crate::protocol::encode(&message)
