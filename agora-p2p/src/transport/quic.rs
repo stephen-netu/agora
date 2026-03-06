@@ -330,7 +330,7 @@ mod tests {
         let config = QuicConfig::new(cert, key);
         
         assert_eq!(config.max_idle_timeout, 30_000);
-        assert_eq!(config.keepalive_interval, 10_000);
+        assert_eq!(config.keepalive_interval, 15_000);
     }
     
     #[tokio::test]
