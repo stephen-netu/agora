@@ -147,10 +147,15 @@ pub struct HeartbeatRequest {
 /// Internal record for storing presence state.
 #[derive(Debug, Clone)]
 pub struct PresenceRecord {
+    /// The user's ID.
     pub user_id: String,
+    /// The user's current presence state.
     pub presence: PresenceState,
+    /// Timestamp of last activity (in milliseconds).
     pub last_active_at: u64,
+    /// The user's status message (if set).
     pub status_msg: Option<String>,
+    /// Whether the user is currently active.
     pub currently_active: bool,
 }
 

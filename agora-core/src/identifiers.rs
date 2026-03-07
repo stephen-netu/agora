@@ -152,5 +152,10 @@ impl fmt::Display for RoomAlias {
 pub enum IdentifierError {
     /// The identifier format was invalid.
     #[error("invalid {kind} format: {value:?}")]
-    InvalidFormat { kind: &'static str, value: String },
+    InvalidFormat { 
+        /// The kind of identifier that was invalid.
+        kind: &'static str, 
+        /// The invalid value that was provided.
+        value: String 
+    },
 }

@@ -10,10 +10,14 @@
 
 //! Core types and utilities for the Agora platform.
 
+/// Matrix Client-Server API request/response types
 pub mod api;
+/// Event types for rooms and spaces
 pub mod events;
+/// Identifier types (UserId, RoomId, EventId, etc.)
 pub mod identifiers;
 
+/// Presence types and utilities
 pub mod presence {
     pub use crate::events::presence::*;
 }
