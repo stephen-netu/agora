@@ -28,16 +28,20 @@ async fn two_nodes_connect_and_exchange_message() {
     );
 
     let config_a = P2pConfig {
+        identity_source: agora_p2p::IdentitySource::Testing(id_a.clone()),
         agent_id: id_a.clone(),
         listen_port: 0,
         service_name: "_agora-test._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
+        wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
     };
     let config_b = P2pConfig {
+        identity_source: agora_p2p::IdentitySource::Testing(id_b.clone()),
         agent_id: id_b.clone(),
         listen_port: 0,
         service_name: "_agora-test._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
+        wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
     };
 
     let mut node_a = P2pNode::new(config_a).await.expect("node_a creation failed");

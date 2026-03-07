@@ -15,7 +15,8 @@ mod node;
 // Re-export only the public API
 pub use agora_crypto::AgentId;
 pub use node::{P2pNode, MeshEvent};
-pub use types::{P2pConfig, TransportMode, YggdrasilConfig};
+pub use types::{P2pConfig, TransportMode, YggdrasilConfig, WanDiscoveryMode, Multiaddr, IdentitySource};
 pub use transport::quic::QuicConfig;
 pub use protocol::AmpMessage;
+pub use discovery::dht::{DhtDiscovery, DhtPeerEvent};
 pub use error::Error;

@@ -3,4 +3,3 @@ pub mod messages;
 
 pub use codec::{decode, encode};
 pub use messages::{AmpMessage, Capabilities, SerializedEvent};
-/// Peer capabilities advertised during handshake

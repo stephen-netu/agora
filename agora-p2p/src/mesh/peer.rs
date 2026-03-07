@@ -127,6 +127,7 @@ impl MeshManager {
                         state_sync: false,
                         collaboration: true,
                         fuel: true,
+                        dispute: true,
                     },
                     sequence,
                 };
@@ -283,6 +284,7 @@ impl MeshManager {
                         state_sync: false,
                         collaboration: true,
                         fuel: true,
+                        dispute: true,
                     },
                     sequence: our_sequence,
                 };

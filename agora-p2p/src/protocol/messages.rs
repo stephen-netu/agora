@@ -97,6 +97,68 @@ pub enum AmpMessage {
         amount: u64,
         signature: Vec<u8>,
     },
+
+    // ── Phase 7: Dispute Game ─────────────────────────────────────────────────
+
+    /// Phase 1: Initiate a dispute against another agent.
+    DisputeOpen {
+        /// Unique dispute identifier (BLAKE3 hash of initiating event)
+        dispute_id: String,
+        /// AgentId of the party initiating the dispute (hex)
+        claimant: String,
+        /// AgentId of the party being accused (hex)
+        respondent: String,
+        /// Checkpoint seqno before the disputed action
+        checkpoint_before_seqno: u64,
+        /// Checkpoint seqno after the disputed action
+        checkpoint_after_seqno: u64,
+        /// Seqno of the specific action being disputed
+        disputed_action_seqno: u64,
+        /// Type of dispute claim
+        dispute_type: DisputeType,
+        /// Human-readable claim summary (max 256 bytes)
+        claim: String,
+        /// Block height/time at which dispute expires if not resolved
+        expires_at: u64,
+    },
+
+    /// Phase 2: Submit evidence in response to a dispute.
+    DisputeEvidence {
+        /// Links back to DisputeOpen.dispute_id
+        dispute_id: String,
+        /// AgentId of the party submitting evidence (hex)
+        submitter: String,
+        /// Serialized SignedEntry list (rmp_serde)
+        sigchain_entries: Vec<Vec<u8>>,
+        /// Whether this is the final evidence submission
+        is_final: bool,
+    },
+
+    /// Phase 4: Publish verdict for a dispute.
+    DisputeVerdict {
+        /// Links back to the dispute
+        dispute_id: String,
+        /// AgentId of the winning party (hex)
+        winner: String,
+        /// Serialized FraudProof if respondent lost
+        fraud_proof: Option<Vec<u8>>,
+        /// Summary of reasoning (max 512 bytes)
+        reasoning: String,
+        /// Block height when verdict was issued
+        issued_at: u64,
+    },
+}
+
+/// Type of dispute claim.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisputeType {
+    /// Claim: work was not performed
+    NonExecution,
+    /// Claim: incorrect output produced
+    IncorrectOutput,
+    /// Claim: unauthorized action taken
+    Unauthorized,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -106,6 +168,7 @@ pub struct Capabilities {
     pub state_sync: bool,
     pub collaboration: bool,
     pub fuel: bool,
+    pub dispute: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +264,7 @@ mod tests {
                 state_sync: false,
                 collaboration: true,
                 fuel: false,
+                dispute: false,
             },
             sequence: 1,
         };
@@ -291,6 +355,7 @@ mod tests {
                 state_sync: true,
                 collaboration: false,
                 fuel: true,
+                dispute: false,
             },
             sequence: 1,
         };

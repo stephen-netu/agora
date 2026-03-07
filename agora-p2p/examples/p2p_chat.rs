@@ -32,10 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting P2P node with AgentId: {}", agent_id.to_hex());
     
     let config = P2pConfig {
+        identity_source: agora_p2p::IdentitySource::default(),
         agent_id,
         listen_port: port,
         service_name: "_agora._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
+        wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
     };
     
     let port = config.listen_port;

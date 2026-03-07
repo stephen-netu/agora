@@ -14,6 +14,8 @@ pub enum IdentitySource {
     File(PathBuf),
     /// Delegate to sovereignd daemon socket (Phase 5)
     Daemon(PathBuf),
+    /// Testing variant that directly provides the agent_id without file I/O
+    Testing(AgentId),
 }
 
 impl Default for IdentitySource {
@@ -30,6 +32,7 @@ impl IdentitySource {
     /// Check if the identity source is available.
     /// For File source, checks if the file exists.
     /// For Daemon source, checks if the socket is reachable.
+    /// For Testing source, always returns true.
     /// Returns true if identity can be resolved.
     pub async fn is_available(&self) -> bool {
         match self {
@@ -39,12 +42,14 @@ impl IdentitySource {
                     .await
                     .is_ok()
             }
+            IdentitySource::Testing(_) => true,
         }
     }
 
     /// Get the resolved AgentId from this source.
     /// For File source, reads and derives the key.
     /// For Daemon source, queries the daemon.
+    /// For Testing source, returns the embedded agent_id directly.
     pub async fn resolve_agent_id(&self) -> Result<AgentId, String> {
         match self {
             IdentitySource::File(path) => {
@@ -69,11 +74,24 @@ impl IdentitySource {
                 let _ = socket_path;
                 Err("sovereignd daemon identity resolution not implemented yet".to_string())
             }
+            IdentitySource::Testing(agent_id) => Ok(agent_id.clone()),
         }
     }
 }
 
 use crate::transport::quic::QuicConfig as QuicConfigInner;
+
+/// WAN discovery mode for P2P peers
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum WanDiscoveryMode {
+    /// WAN discovery is disabled
+    #[default]
+    Disabled,
+    /// Use specific bootstrap nodes for WAN discovery
+    Bootstrap(Vec<String>),
+    /// Use public/default bootstrap nodes for WAN discovery
+    Public,
+}
 
 /// A peer in the P2P mesh
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +113,8 @@ pub struct P2pConfig {
     pub service_name: String,
     /// Transport mode for P2P communication
     pub transport: TransportMode,
+    /// WAN discovery mode
+    pub wan_discovery: WanDiscoveryMode,
 }
 
 impl Default for P2pConfig {
@@ -105,6 +125,7 @@ impl Default for P2pConfig {
             listen_port: 0,
             service_name: "_agora._udp.local.".to_string(),
             transport: TransportMode::Auto,
+            wan_discovery: WanDiscoveryMode::default(),
         }
     }
 }

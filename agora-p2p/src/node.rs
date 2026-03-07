@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use agora_crypto::AgentId;
 use crate::error::Error;
-use crate::types::P2pConfig;
+use crate::types::{P2pConfig, WanDiscoveryMode};
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
 use crate::discovery::mdns::{MdnsDiscovery, MdnsPeerEvent};
 use crate::protocol::{AmpMessage, SerializedEvent};
@@ -68,6 +68,7 @@ impl P2pNode {
             listen_port: config.listen_port,
             service_name: config.service_name,
             transport: config.transport,
+            wan_discovery: config.wan_discovery,
         };
         
         Ok(Self {
@@ -79,7 +80,7 @@ impl P2pNode {
             mesh_events_rx: Some(mesh_events_rx),
             mesh_internal_rx: Some(mesh_internal_rx),
             sequence_counter: AtomicU64::new(0),
-            wan_discovery_enabled: AtomicBool::new(false),
+            wan_discovery_enabled: AtomicBool::new(!matches!(config.wan_discovery, WanDiscoveryMode::Disabled)),
         })
     }
     
