@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use agora_crypto::identity::TrustState;
 use agora_crypto::AgentId;
 use quinn::SendStream;
 use tokio::sync::{mpsc, RwLock};
@@ -36,6 +37,8 @@ pub struct MeshManager {
     sequence_counter: AtomicU64,
     /// Replay protection for incoming messages
     replay_protection: ReplayProtection,
+    /// Trust registry for peer trust state
+    trust_registry: Arc<RwLock<BTreeMap<AgentId, TrustState>>>,
 }
 
 impl MeshManager {
@@ -52,6 +55,7 @@ impl MeshManager {
             events,
             sequence_counter: AtomicU64::new(0),
             replay_protection: ReplayProtection::new(),
+            trust_registry: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -144,8 +148,9 @@ impl MeshManager {
 
                 let _ = events.send(MeshEvent::Connected(peer_id.clone())).await;
 
+                let trust_registry = self.trust_registry.clone();
                 tokio::spawn(async move {
-                    Self::accept_streams_loop(peer_id, connection.connection, events).await;
+                    Self::accept_streams_loop(peer_id, connection.connection, events, trust_registry).await;
                 });
             }
             Err(e) => {
@@ -158,17 +163,37 @@ impl MeshManager {
         peer_id: AgentId,
         connection: quinn::Connection,
         events: mpsc::Sender<MeshEvent>,
+        trust_registry: Arc<RwLock<BTreeMap<AgentId, TrustState>>>,
     ) {
         loop {
             match connection.accept_bi().await {
                 Ok((_send, recv)) => {
                     let peer_id = peer_id.clone();
                     let events = events.clone();
+                    let trust_registry = trust_registry.clone();
                     tokio::spawn(async move {
                         let mut recv = recv;
                         match read_message(&mut recv).await {
                             Ok(bytes) => match decode(&bytes) {
                                 Ok(message) => {
+                                    // Trust gate: reject FuelClaim from untrusted peers
+                                    if let AmpMessage::FuelClaim { .. } = &message {
+                                        let trust_state = trust_registry
+                                            .read()
+                                            .await
+                                            .get(&peer_id)
+                                            .cloned()
+                                            .unwrap_or(TrustState::Untrusted);
+                                        
+                                        if trust_state != TrustState::Trusted {
+                                            tracing::debug!("Rejected FuelClaim from untrusted peer: {}", peer_id);
+                                            let _ = events.send(MeshEvent::Error(
+                                                peer_id.clone(), 
+                                                "rejected FuelClaim: peer not trusted".to_string()
+                                            )).await;
+                                            return;
+                                        }
+                                    }
                                     let _ = events.send(MeshEvent::MessageReceived(peer_id, message)).await;
                                 }
                                 Err(e) => {
@@ -292,8 +317,9 @@ impl MeshManager {
                 
                 let _ = events.send(MeshEvent::Connected(peer_agent_id.clone())).await;
 
+                let trust_registry = self.trust_registry.clone();
                 tokio::spawn(async move {
-                    Self::accept_streams_loop(peer_agent_id, connection.connection, events).await;
+                    Self::accept_streams_loop(peer_agent_id, connection.connection, events, trust_registry).await;
                 });
             }
             Err(e) => {
@@ -336,5 +362,20 @@ impl MeshManager {
             self.replay_protection.remove_peer(peer_id).await;
             let _ = self.events.send(MeshEvent::Disconnected(peer_id.clone())).await;
         }
+    }
+
+    /// Set trust state for a peer.
+    pub async fn set_trust(&self, peer_id: &AgentId, state: TrustState) {
+        self.trust_registry.write().await.insert(peer_id.clone(), state);
+    }
+
+    /// Get trust state for a peer. Returns TrustState::Untrusted if not found.
+    pub async fn get_trust(&self, peer_id: &AgentId) -> TrustState {
+        self.trust_registry
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .unwrap_or(TrustState::Untrusted)
     }
 }

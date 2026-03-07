@@ -51,11 +51,17 @@ impl IdentitySource {
                 let bytes = tokio::fs::read(path)
                     .await
                     .map_err(|e| format!("failed to read identity file: {}", e))?;
-                if bytes.len() != 32 {
-                    return Err("identity file must be 32 bytes".to_string());
-                }
+                // Support both 32-byte (legacy) and 64-byte (sovereignd) formats
+                // 64-byte format: secret key (32 bytes) + verifying key (32 bytes)
+                let secret_key = if bytes.len() == 64 {
+                    &bytes[0..32]
+                } else if bytes.len() == 32 {
+                    &bytes[..]
+                } else {
+                    return Err("identity file must be 32 or 64 bytes".to_string());
+                };
                 let mut key_bytes = [0u8; 32];
-                key_bytes.copy_from_slice(&bytes);
+                key_bytes.copy_from_slice(secret_key);
                 Ok(AgentId::from_bytes(&key_bytes)
                     .map_err(|e| format!("invalid identity key: {}", e))?)
             }
