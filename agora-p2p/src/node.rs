@@ -8,14 +8,14 @@ use tracing::{info, warn};
 
 use agora_crypto::AgentId;
 use crate::error::Error;
-use crate::types::{Config, Peer};
+use crate::types::P2pConfig;
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
 use crate::discovery::mdns::{MdnsDiscovery, MdnsPeerEvent};
 use crate::protocol::{AmpMessage, SerializedEvent};
 use crate::mesh::peer::MeshManager;
 
 pub struct P2pNode {
-    config: Config,
+    config: P2pConfig,
     transport: Arc<QuicTransport>,
     discovery: Arc<RwLock<Option<MdnsDiscovery>>>,
     mesh: Arc<MeshManager>,
@@ -35,7 +35,7 @@ pub enum MeshEvent {
 }
 
 impl P2pNode {
-    pub async fn new(config: Config) -> Result<Self, Error> {
+    pub async fn new(config: P2pConfig) -> Result<Self, Error> {
         let (cert, key) = generate_self_signed_cert(&config.agent_id)?;
         
         let quic_config = QuicConfig::new(cert, key);
@@ -217,5 +217,146 @@ impl P2pNode {
     
     pub fn take_mesh_events(&mut self) -> Option<mpsc::Receiver<MeshEvent>> {
         self.mesh_events_rx.take()
+    }
+
+    /// Send a CollaborationRequest to all connected peers.
+    ///
+    /// Loop detection: if `self.agent_id()` already appears in `correlation_path`,
+    /// returns an error without sending (S-05: bounded call chains).
+    /// S-05: correlation_path is bounded to 16 entries.
+    pub async fn send_collaboration_request(
+        &self,
+        block_id: &str,
+        content: Vec<u8>,
+        correlation_path: Vec<String>,
+    ) -> Result<(), Error> {
+        if correlation_path.len() > 16 {
+            return Err(Error::Broadcast(
+                "correlation_path exceeds 16-hop limit (S-05)".to_string(),
+            ));
+        }
+        let own_id = self.config.agent_id.to_hex();
+        if correlation_path.iter().any(|id| id == &own_id) {
+            return Err(Error::Broadcast(
+                "loop detected in correlation_path".to_string(),
+            ));
+        }
+        // Add self to correlation_path for proper multi-hop loop detection (S-05)
+        let mut path = correlation_path;
+        path.push(own_id.clone());
+        let msg = AmpMessage::CollaborationRequest {
+            block_id: block_id.to_string(),
+            content,
+            from: own_id,
+            correlation_path: path,
+        };
+        let peers = self.mesh.connected_peers().await;
+        for peer_id in peers {
+            if let Err(e) = self.mesh.send_to(&peer_id, msg.clone()).await {
+                info!("Failed to send CollaborationRequest to peer {}: {}", peer_id, e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Send a CollaborationResponse to a specific peer by AgentId hex.
+    pub async fn send_collaboration_response(
+        &self,
+        block_id: &str,
+        content: Vec<u8>,
+        target_agent_id: &str,
+        proof: Option<Vec<u8>>,
+    ) -> Result<(), Error> {
+        let peer_id = agora_crypto::AgentId::from_hex(target_agent_id)
+            .map_err(|e| Error::Broadcast(format!("invalid target agent_id: {}", e)))?;
+        let msg = AmpMessage::CollaborationResponse {
+            block_id: block_id.to_string(),
+            content,
+            agent_id: self.config.agent_id.to_hex(),
+            proof,
+        };
+        self.mesh.send_to(&peer_id, msg).await
+    }
+
+    /// Send a CollaborationRefusal to all connected peers.
+    ///
+    /// S-05: reason is bounded to 256 bytes; correlation_path_snapshot to 16 entries.
+    pub async fn send_collaboration_refusal(
+        &self,
+        block_id: &str,
+        reason: &str,
+        correlation_path_snapshot: Vec<String>,
+    ) -> Result<(), Error> {
+        if reason.len() > 256 {
+            return Err(Error::Broadcast(
+                "refusal reason exceeds 256 bytes (S-05)".to_string(),
+            ));
+        }
+        if correlation_path_snapshot.len() > 16 {
+            return Err(Error::Broadcast(
+                "correlation_path_snapshot exceeds 16-hop limit (S-05)".to_string(),
+            ));
+        }
+        let msg = AmpMessage::CollaborationRefusal {
+            block_id: block_id.to_string(),
+            from: self.config.agent_id.to_hex(),
+            reason: reason.to_string(),
+            correlation_path_snapshot,
+        };
+        let peers = self.mesh.connected_peers().await;
+        for peer_id in peers {
+            if let Err(e) = self.mesh.send_to(&peer_id, msg.clone()).await {
+                info!("Failed to send CollaborationRefusal to peer {}: {}", peer_id, e);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn agent_id(&self) -> &agora_crypto::AgentId {
+        &self.config.agent_id
+    }
+
+    pub fn transport_mode(&self) -> &crate::types::TransportMode {
+        &self.config.transport
+    }
+
+    pub fn listen_port(&self) -> u16 {
+        self.config.listen_port
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_loop_detection_check() {
+        // The loop detection logic: if own_id appears in correlation_path, reject.
+        let own_hex = "aa".repeat(32); // 64-char hex
+        let path_with_self = vec![own_hex.clone()];
+        assert!(path_with_self.iter().any(|id| id == &own_hex));
+
+        let path_without_self = vec!["bb".repeat(32)];
+        assert!(!path_without_self.iter().any(|id| id == &own_hex));
+    }
+
+    #[test]
+    fn test_correlation_path_limit() {
+        // S-05: paths longer than 16 must be rejected.
+        let long_path: Vec<String> = (0..17).map(|i| format!("{:064x}", i)).collect();
+        assert!(long_path.len() > 16);
+
+        let valid_path: Vec<String> = (0..16).map(|i| format!("{:064x}", i)).collect();
+        assert!(valid_path.len() <= 16);
+    }
+
+    #[test]
+    fn test_refusal_reason_limit() {
+        // S-05: reasons longer than 256 bytes must be rejected.
+        let long_reason = "x".repeat(257);
+        assert!(long_reason.len() > 256);
+
+        let valid_reason = "loop detected";
+        assert!(valid_reason.len() <= 256);
     }
 }

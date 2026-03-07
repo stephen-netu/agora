@@ -120,7 +120,7 @@ mod tests {
         let ygg_addr: SocketAddr = "[200:dead:beef::1]:1234".parse().unwrap();
         assert!(is_yggdrasil_addr(&ygg_addr));
 
-        let normal_addr: SocketAddr = "[192.168.1.1]:1234".parse().unwrap();
+        let normal_addr: SocketAddr = "192.168.1.1:1234".parse().unwrap();
         assert!(!is_yggdrasil_addr(&normal_addr));
     }
 }

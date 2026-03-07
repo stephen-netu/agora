@@ -122,6 +122,7 @@ impl MeshManager {
                         relay: true,
                         state_sync: false,
                         collaboration: true,
+                        fuel: true,
                     },
                     sequence,
                 };
@@ -256,6 +257,7 @@ impl MeshManager {
                         relay: true,
                         state_sync: false,
                         collaboration: true,
+                        fuel: true,
                     },
                     sequence: our_sequence,
                 };

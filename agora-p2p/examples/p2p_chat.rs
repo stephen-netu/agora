@@ -6,7 +6,7 @@
 //! Or specify a port:
 //!   cargo run --example p2p_chat -- --port 9000
 
-use agora_p2p::{P2pNode, Config, MeshEvent};
+use agora_p2p::{P2pNode, P2pConfig, MeshEvent};
 use agora_crypto::AgentIdentity;
 use rand::Rng;
 use std::io::{self, Write};
@@ -31,10 +31,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     println!("Starting P2P node with AgentId: {}", agent_id.to_hex());
     
-    let config = Config {
+    let config = P2pConfig {
         agent_id,
         listen_port: port,
         service_name: "_agora._udp.local.".to_string(),
+        transport: agora_p2p::TransportMode::Auto,
     };
     
     let port = config.listen_port;
@@ -58,8 +59,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     print!("> ");
                     io::stdout().flush().ok();
                 }
-                MeshEvent::MessageReceived(peer_id, data) => {
-                    let msg = String::from_utf8_lossy(&data);
+                MeshEvent::MessageReceived(peer_id, amp_msg) => {
+                    // Extract content bytes from EventPush messages
+                    let msg = match &amp_msg {
+                        agora_p2p::AmpMessage::EventPush { events, .. } => {
+                            events.first()
+                                .map(|e| String::from_utf8_lossy(&e.content).into_owned())
+                                .unwrap_or_else(|| format!("{:?}", amp_msg))
+                        }
+                        other => format!("{:?}", other),
+                    };
                     println!("\n[{}]: {}", &peer_id[..8], msg);
                     print!("> ");
                     io::stdout().flush().ok();

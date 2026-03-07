@@ -1,7 +1,7 @@
 // agora-p2p/tests/integration_test.rs
 
 use agora_p2p::{P2pNode, MeshEvent};
-use agora_p2p::types::Config;
+use agora_p2p::P2pConfig;
 use agora_crypto::AgentId;
 use tokio::time::{timeout, Duration};
 
@@ -27,15 +27,17 @@ async fn two_nodes_connect_and_exchange_message() {
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     );
 
-    let config_a = Config {
+    let config_a = P2pConfig {
         agent_id: id_a.clone(),
         listen_port: 0,
         service_name: "_agora-test._udp.local.".to_string(),
+        transport: agora_p2p::TransportMode::Auto,
     };
-    let config_b = Config {
+    let config_b = P2pConfig {
         agent_id: id_b.clone(),
         listen_port: 0,
         service_name: "_agora-test._udp.local.".to_string(),
+        transport: agora_p2p::TransportMode::Auto,
     };
 
     let mut node_a = P2pNode::new(config_a).await.expect("node_a creation failed");
