@@ -70,6 +70,8 @@ impl P2pNode {
             transport: config.transport,
             wan_discovery: config.wan_discovery,
         };
+
+        let wan_discovery = config.wan_discovery.clone();
         
         Ok(Self {
             config,
@@ -80,7 +82,7 @@ impl P2pNode {
             mesh_events_rx: Some(mesh_events_rx),
             mesh_internal_rx: Some(mesh_internal_rx),
             sequence_counter: AtomicU64::new(0),
-            wan_discovery_enabled: AtomicBool::new(!matches!(config.wan_discovery, WanDiscoveryMode::Disabled)),
+            wan_discovery_enabled: AtomicBool::new(!matches!(wan_discovery, WanDiscoveryMode::Disabled)),
         })
     }
     

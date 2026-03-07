@@ -69,7 +69,7 @@ impl SigchainManager {
         self.chain.agent_id.to_hex()
     }
 
-    /// Return a reference to the `AgentId`.
+    // IMPLEMENTATION_REQUIRED: return agent_id - wire up to CLI commands
     pub fn agent_id(&self) -> &AgentId {
         &self.chain.agent_id
     }

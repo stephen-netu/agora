@@ -215,6 +215,7 @@ impl AgoraClient {
 
     // -- Messages ------------------------------------------------------------
 
+    // IMPLEMENTATION_REQUIRED: message sending - wire up to CLI commands
     pub async fn send_message(
         &self,
         room_id: &str,
@@ -476,7 +477,7 @@ impl AgoraClient {
 
     // -- Presence ------------------------------------------------------------
 
-    /// Get presence status for a user.
+    // IMPLEMENTATION_REQUIRED: get presence - wire up to CLI commands
     pub async fn get_presence(
         &self,
         user_id: &str,
@@ -496,7 +497,7 @@ impl AgoraClient {
         Self::parse_response(resp).await
     }
 
-    /// Set presence status for the current user.
+    // IMPLEMENTATION_REQUIRED: set presence - wire up to CLI commands
     pub async fn set_presence(
         &self,
         presence: &str,
@@ -534,7 +535,7 @@ impl AgoraClient {
         Ok(())
     }
 
-    /// Send a heartbeat to keep online status.
+    // IMPLEMENTATION_REQUIRED: heartbeat - wire up to CLI commands
     pub async fn heartbeat(&self, currently_active: Option<bool>) -> Result<(), CliClientError> {
         let auth = self.auth_header()?;
         let mut body = serde_json::Map::new();
@@ -553,7 +554,7 @@ impl AgoraClient {
         Ok(())
     }
 
-    /// Get presence for multiple users.
+    // IMPLEMENTATION_REQUIRED: get presence list - wire up to CLI commands
     pub async fn get_presence_list(
         &self,
         user_ids: &[String],
