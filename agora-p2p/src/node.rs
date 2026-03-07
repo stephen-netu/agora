@@ -1,7 +1,7 @@
 //! Main P2P Node that ties everything together
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
@@ -24,6 +24,9 @@ pub struct P2pNode {
     mesh_internal_rx: Option<mpsc::Receiver<crate::mesh::peer::MeshEvent>>,
     /// Sequence counter for deterministic event timestamps (S-02 compliant)
     sequence_counter: AtomicU64,
+    /// Whether WAN (non-LAN) peer discovery is enabled.
+    /// Persisted at the Tauri layer; P2pNode owns the runtime gate.
+    wan_discovery_enabled: AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +79,7 @@ impl P2pNode {
             mesh_events_rx: Some(mesh_events_rx),
             mesh_internal_rx: Some(mesh_internal_rx),
             sequence_counter: AtomicU64::new(0),
+            wan_discovery_enabled: AtomicBool::new(false),
         })
     }
     
@@ -336,6 +340,19 @@ impl P2pNode {
 
     pub fn listen_port(&self) -> u16 {
         self.config.listen_port
+    }
+
+    /// Enable or disable WAN (non-LAN) peer discovery.
+    ///
+    /// This gates the runtime preference — actual WAN transport activation
+    /// (DHT, rendezvous, etc.) is IMPLEMENTATION_REQUIRED when those transports land.
+    pub fn set_wan_discovery(&self, enabled: bool) {
+        self.wan_discovery_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Returns whether WAN discovery is currently enabled.
+    pub fn is_wan_discovery_enabled(&self) -> bool {
+        self.wan_discovery_enabled.load(Ordering::SeqCst)
     }
 }
 
