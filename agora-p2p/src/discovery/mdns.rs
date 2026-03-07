@@ -21,8 +21,6 @@ pub struct MdnsDiscovery {
 pub enum MdnsPeerEvent {
     PeerDiscovered(Peer),
     PeerRemoved(String),
-    // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer update events
-    PeerUpdated(Peer),
 }
 
 pub fn create_instance_name(agent_id: &str) -> String {
@@ -185,16 +183,6 @@ impl MdnsDiscovery {
         }
         
         Ok(())
-    }
-    
-    // IMPLEMENTATION_REQUIRED: wired in future wt-XXX
-    pub async fn get_peers(&self) -> Vec<Peer> {
-        self.peers.read().await.values().cloned().collect()
-    }
-    
-    // IMPLEMENTATION_REQUIRED: wired in future wt-XXX
-    pub async fn get_peer(&self, agent_id: &str) -> Option<Peer> {
-        self.peers.read().await.get(agent_id).cloned()
     }
 }
 

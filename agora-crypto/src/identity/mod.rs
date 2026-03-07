@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::CryptoError;
 
+fn push_hex_byte(hex: &mut String, byte: u8) {
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+    hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
+    hex.push(HEX_CHARS[(byte & 0xf) as usize] as char);
+}
+
 // ── AgentId ───────────────────────────────────────────────────────────────────
 
 /// Compact 32-byte agent identifier derived from an Ed25519 verifying key.
@@ -33,7 +39,11 @@ impl AgentId {
 
     /// Return the lower-hex encoding of the 32-byte identifier.
     pub fn to_hex(&self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+        let mut hex = String::with_capacity(64);
+        for b in &self.0 {
+            push_hex_byte(&mut hex, *b);
+        }
+        hex
     }
 
     /// Parse an `AgentId` from a 64-character lower-hex string.
@@ -68,7 +78,10 @@ impl AgentId {
 
 impl fmt::Display for AgentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let hex: String = self.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let mut hex = String::with_capacity(16);
+        for b in &self.0[..8] {
+            push_hex_byte(&mut hex, *b);
+        }
         write!(f, "agnt-{hex}")
     }
 }
@@ -182,7 +195,7 @@ pub enum SigchainBody {
     /// Remove a previously added device.
     RevokeDevice {
         /// Unique identifier for the device to revoke.
-        device_id: String
+        device_id: String,
     },
     /// Rotate to a new Ed25519 verifying key.
     RotateKey {
@@ -539,6 +552,7 @@ impl Sigchain {
     /// 5. Co-signer signature verified for Genesis links that carry one.
     /// 6. `Action.correlation_path.len() <= 16` (S-05).
     /// 7. `TrustTransition.reason.len() <= 256`.
+    #[allow(clippy::too_many_lines)]
     pub fn verify_chain(&self) -> Result<(), CryptoError> {
         if self.links.is_empty() {
             return Err(CryptoError::SigchainVerification("chain is empty".into()));
@@ -635,7 +649,7 @@ impl Sigchain {
             let signature = Signature::from_bytes(&sig_bytes);
 
             vk.verify(&to_sign, &signature).map_err(|e| {
-                CryptoError::SigchainVerification(format!("link {idx}: invalid signature: {e}"))
+                CryptoError::SigchainVerification(format!("entry {idx}: invalid signature: {e}"))
             })?;
 
             // Co-signer verification for Genesis.
@@ -814,7 +828,11 @@ impl Sigchain {
         let mut best: Option<(u64, u64)> = None;
 
         for link in &self.links {
-            if let SigchainBody::Checkpoint { covers_through_seqno, .. } = &link.body {
+            if let SigchainBody::Checkpoint {
+                covers_through_seqno,
+                ..
+            } = &link.body
+            {
                 if *covers_through_seqno <= seqno {
                     match best {
                         None => best = Some((link.seqno, *covers_through_seqno)),
@@ -838,7 +856,11 @@ impl Sigchain {
         let mut best: Option<(u64, u64)> = None;
 
         for link in &self.links {
-            if let SigchainBody::Checkpoint { covers_through_seqno, .. } = &link.body {
+            if let SigchainBody::Checkpoint {
+                covers_through_seqno,
+                ..
+            } = &link.body
+            {
                 if *covers_through_seqno >= seqno {
                     match best {
                         None => best = Some((link.seqno, *covers_through_seqno)),
@@ -873,9 +895,7 @@ impl Sigchain {
         expected_merkle_root: [u8; 32],
     ) -> Result<(), CryptoError> {
         if entries.is_empty() {
-            return Err(CryptoError::SigchainVerification(
-                "segment is empty".into(),
-            ));
+            return Err(CryptoError::SigchainVerification("segment is empty".into()));
         }
 
         let mut action_hashes: Vec<[u8; 32]> = Vec::new();
@@ -885,14 +905,13 @@ impl Sigchain {
             if let Some(expected_prev) = prev_hash {
                 if entry.canonical_hash != expected_prev {
                     return Err(CryptoError::SigchainVerification(format!(
-                        "entry {}: hash-link continuity broken",
-                        idx
+                        "entry {idx}: hash-link continuity broken"
                     )));
                 }
             }
 
             let vk = VerifyingKey::from_bytes(&entry.link.signer).map_err(|e| {
-                CryptoError::SigchainVerification(format!("entry {}: bad signer key: {e}", idx))
+                CryptoError::SigchainVerification(format!("entry {idx}: bad signer key: {e}"))
             })?;
 
             let to_sign = SigchainLink::signed_bytes(
@@ -901,16 +920,15 @@ impl Sigchain {
                 &entry.link.body,
             )?;
 
-            let sig_bytes: [u8; 64] = entry.link.signature.as_slice().try_into().map_err(
-                |_| CryptoError::SigchainVerification(format!("entry {}: signature must be 64 bytes", idx)),
-            )?;
+            let sig_bytes: [u8; 64] = entry.link.signature.as_slice().try_into().map_err(|_| {
+                CryptoError::SigchainVerification(format!(
+                    "entry {idx}: signature must be 64 bytes"
+                ))
+            })?;
             let signature = Signature::from_bytes(&sig_bytes);
 
             vk.verify(&to_sign, &signature).map_err(|e| {
-                CryptoError::SigchainVerification(format!(
-                    "entry {}: invalid signature: {e}",
-                    idx
-                ))
+                CryptoError::SigchainVerification(format!("entry {idx}: invalid signature: {e}"))
             })?;
 
             if let SigchainBody::Action { event_id_hash, .. } = &entry.link.body {
@@ -923,8 +941,7 @@ impl Sigchain {
         let computed_merkle_root = Sigchain::compute_checkpoint_merkle_root(&action_hashes);
         if computed_merkle_root != expected_merkle_root {
             return Err(CryptoError::SigchainVerification(format!(
-                "merkle root mismatch: expected {:02x?}, computed {:02x?}",
-                expected_merkle_root, computed_merkle_root
+                "merkle root mismatch: expected {expected_merkle_root:02x?}, computed {computed_merkle_root:02x?}"
             )));
         }
 
@@ -1543,7 +1560,7 @@ mod tests {
         let mut chain = Sigchain::genesis(&identity, vec![], None).expect("genesis failed");
 
         let oversized_path: Vec<AgentId> = (0u8..17)
-            .map(|i| make_identity(0xF0 + i).agent_id)
+            .map(|i| make_identity(0xF0_u8.wrapping_add(i)).agent_id)
             .collect();
 
         chain

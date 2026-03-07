@@ -186,9 +186,6 @@ impl P2pNode {
                                     });
                                 mesh.disconnect(&peer_id).await;
                             }
-                            MdnsPeerEvent::PeerUpdated(peer) => {
-                                info!("Peer updated: {}", peer.agent_id);
-                            }
                         }
                     }
                     else => break,
@@ -361,7 +358,6 @@ impl P2pNode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_loop_detection_check() {

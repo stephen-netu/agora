@@ -69,11 +69,6 @@ impl SigchainManager {
         self.chain.agent_id.to_hex()
     }
 
-    // IMPLEMENTATION_REQUIRED: return agent_id - wire up to CLI commands
-    pub fn agent_id(&self) -> &AgentId {
-        &self.chain.agent_id
-    }
-
     /// Append a new `Action` link and return it for publishing.
     ///
     /// - `event_type`: Matrix event type string (e.g. `"m.room.message"`).

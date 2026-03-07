@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use agora_crypto::account::{Account, PreKeyEnvelope};
+use agora_crypto::account::Account;
 
 use super::sessions::{pickle_pairwise_session, unpickle_pairwise_session};
 use super::store::CryptoStore;
@@ -69,58 +69,6 @@ impl<'a> OlmManager<'a> {
         Ok(())
     }
 
-    /// Decrypt an incoming pairwise event.
-    pub fn decrypt(
-        &mut self,
-        sender_key: &str,
-        msg_type: u8,
-        body: &str,
-    ) -> Result<String, String> {
-        // Try existing sessions first (Normal messages).
-        if msg_type == 1 {
-            if let Some(pickles) = self.store.data.olm_sessions.get(sender_key) {
-                for pickle_str in pickles.iter().rev() {
-                    let mut session = match unpickle_pairwise_session(pickle_str) {
-                        Ok(s) => s,
-                        Err(_) => continue,
-                    };
-                    if let Ok(plaintext_bytes) = session.decrypt_normal(body) {
-                        self.store.data.olm_sessions.insert(
-                            sender_key.to_owned(),
-                            vec![pickle_pairwise_session(&session)
-                                .map_err(|e| format!("persist pairwise state: {e}"))?],
-                        );
-                        self.store
-                            .save()
-                            .map_err(|e| format!("persist pairwise state: {e}"))?;
-                        return String::from_utf8(plaintext_bytes)
-                            .map_err(|e| format!("invalid utf8: {e}"));
-                    }
-                }
-            }
-        }
-
-        // PreKey message: create inbound session.
-        if msg_type == 0 {
-            let envelope = Account::decode_prekey_envelope(body)
-                .map_err(|e| format!("decode prekey: {e}"))?;
-            let (session, plaintext_bytes) = self
-                .account
-                .create_inbound_session(&envelope)
-                .map_err(|e| format!("create inbound session: {e}"))?;
-            self.store.data.olm_sessions.insert(
-                sender_key.to_owned(),
-                vec![pickle_pairwise_session(&session)
-                    .map_err(|e| format!("persist pairwise state: {e}"))?],
-            );
-            self.store.save().map_err(|e| format!("persist pairwise state: {e}"))?;
-            return String::from_utf8(plaintext_bytes)
-                .map_err(|e| format!("invalid utf8: {e}"));
-        }
-
-        Err("unable to decrypt pairwise message".to_owned())
-    }
-
     fn get_existing_session(
         &mut self,
         curve_key_str: &str,
@@ -132,9 +80,4 @@ impl<'a> OlmManager<'a> {
         }
         Err("no existing pairwise session — must create outbound session from claimed OTK".to_owned())
     }
-}
-
-/// Parse a PreKey envelope from a base64 body.
-pub fn parse_prekey_envelope(body: &str) -> Result<PreKeyEnvelope, String> {
-    Account::decode_prekey_envelope(body).map_err(|e| format!("decode prekey: {e}"))
 }

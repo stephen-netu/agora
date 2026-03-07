@@ -17,13 +17,13 @@ ed25519-dalek = { workspace = true }
 sha2 = { workspace = true }
 
 # QUIC transport - force aws-lc-rs
-quinn = { workspace = true, default-features = false, features = ["aws-lc-rs", "runtime-tokio"] }
+quinn = { workspace = true, features = ["aws-lc-rs", "runtime-tokio"] }
 
 # TLS - use aws-lc-rs explicitly
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 # Certificate generation  
-rcgen = { workspace = true, default-features = false, features = ["aws_lc_rs", "crypto"] }
+rcgen = { workspace = true, features = ["aws_lc_rs", "crypto"] }
 blake3 = { workspace = true }
 
 # Utilities

@@ -104,7 +104,12 @@ pub fn media_id(uploader: &str, content_hash: &[u8; 32], timestamp: u64) -> Stri
 /// - `user_id` — the authenticated user's ID
 /// - `device_id` — the device being registered
 /// - `timestamp` — monotonic sequence timestamp
-pub fn access_token(server_secret: &[u8; 32], user_id: &str, device_id: &str, timestamp: u64) -> String {
+pub fn access_token(
+    server_secret: &[u8; 32],
+    user_id: &str,
+    device_id: &str,
+    timestamp: u64,
+) -> String {
     let mut hasher = blake3::Hasher::new_keyed(server_secret);
     hasher.update(b"agora:access_token:v1");
     hasher.update(&[SEP]);
@@ -136,7 +141,13 @@ pub fn device_id(user_id: &str, timestamp: u64) -> String {
 }
 
 fn hex_upper(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect()
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+        hex.push(HEX_CHARS[(*b >> 4) as usize] as char);
+        hex.push(HEX_CHARS[(*b & 0xf) as usize] as char);
+    }
+    hex
 }
 
 #[cfg(test)]
@@ -145,8 +156,20 @@ mod tests {
 
     #[test]
     fn event_id_deterministic() {
-        let id1 = event_id("!room:localhost", "@alice:localhost", "m.room.message", b"{}", 42);
-        let id2 = event_id("!room:localhost", "@alice:localhost", "m.room.message", b"{}", 42);
+        let id1 = event_id(
+            "!room:localhost",
+            "@alice:localhost",
+            "m.room.message",
+            b"{}",
+            42,
+        );
+        let id2 = event_id(
+            "!room:localhost",
+            "@alice:localhost",
+            "m.room.message",
+            b"{}",
+            42,
+        );
         assert_eq!(id1, id2);
         assert!(id1.starts_with("$blake3:"));
     }
@@ -179,7 +202,9 @@ mod tests {
     fn device_id_format() {
         let id = device_id("@alice:localhost", 0);
         assert_eq!(id.len(), 10);
-        assert!(id.chars().all(|c| c.is_ascii_hexdigit() && (c.is_uppercase() || c.is_ascii_digit())));
+        assert!(id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && (c.is_uppercase() || c.is_ascii_digit())));
     }
 
     #[test]

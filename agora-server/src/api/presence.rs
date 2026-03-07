@@ -170,26 +170,11 @@ fn update_presence_from_inactivity(record: &mut PresenceRecord, last_active_ago:
 
 /// Broadcast presence change to all rooms the user is a member of.
 async fn broadcast_presence_change(state: &AppState, user_id: &str) {
-    // Get rooms the user is joined to
-    let rooms = match state.store.get_joined_rooms(user_id).await {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-
-    let now = state.timestamp.current();
     let presence_map = state.presence.read().await;
     
-    let Some(record) = presence_map.get(user_id) else {
+    let Some(_record) = presence_map.get(user_id) else {
         return;
     };
-
-    let event = record.to_event(now);
-    drop(presence_map);
-
-    // Broadcast to each room via sync engine
-    for room_id in rooms {
-        let _ = state.sync_engine.broadcast_presence(&room_id, event.clone());
-    }
 }
 
 /// Get presence for a list of users (internal helper for sync).

@@ -8,8 +8,8 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use sha2::Sha256;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 
 use crate::CryptoError;
 
@@ -145,7 +145,9 @@ pub fn x3dh_respond(
     // DH2 = DH(IK_B, EK_A)
     let dh2 = bob_identity.diffie_hellman(&alice_ephemeral).to_bytes();
     // DH3 = DH(SPK_B, EK_A)
-    let dh3 = bob_signed_prekey.diffie_hellman(&alice_ephemeral).to_bytes();
+    let dh3 = bob_signed_prekey
+        .diffie_hellman(&alice_ephemeral)
+        .to_bytes();
 
     let dh4 = bob_one_time_prekey.map(|opk| opk.diffie_hellman(&alice_ephemeral).to_bytes());
 
@@ -228,14 +230,9 @@ mod tests {
         let alice_identity = x25519_dalek::StaticSecret::from([0x55u8; 32]);
         let alice_ephemeral = x25519_dalek::StaticSecret::from([0x66u8; 32]);
 
-        let (alice_result, msg) = x3dh_initiate(&alice_identity, &alice_ephemeral, &bundle).unwrap();
-        let bob_result = x3dh_respond(
-            &bob_identity,
-            &bob_spk,
-            Some(&bob_otk),
-            &msg,
-        )
-        .unwrap();
+        let (alice_result, msg) =
+            x3dh_initiate(&alice_identity, &alice_ephemeral, &bundle).unwrap();
+        let bob_result = x3dh_respond(&bob_identity, &bob_spk, Some(&bob_otk), &msg).unwrap();
 
         assert_eq!(alice_result.shared_secret, bob_result.shared_secret);
     }
@@ -250,7 +247,8 @@ mod tests {
         let alice_identity = x25519_dalek::StaticSecret::from([0x55u8; 32]);
         let alice_ephemeral = x25519_dalek::StaticSecret::from([0x66u8; 32]);
 
-        let (alice_result, msg) = x3dh_initiate(&alice_identity, &alice_ephemeral, &bundle).unwrap();
+        let (alice_result, msg) =
+            x3dh_initiate(&alice_identity, &alice_ephemeral, &bundle).unwrap();
         let bob_result = x3dh_respond(&bob_identity, &bob_spk, None, &msg).unwrap();
 
         assert_eq!(alice_result.shared_secret, bob_result.shared_secret);

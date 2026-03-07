@@ -13,6 +13,10 @@
 #![deny(unused_imports)]
 #![deny(unused_variables)]
 #![deny(unused_mut)]
+// Allow documentation lints - these are stylistic and don't affect correctness
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
 
 pub mod account;
 pub mod agreement;
@@ -24,10 +28,13 @@ pub mod ratchet;
 pub mod store;
 pub mod timestamp;
 
+pub use identity::display::agent_display_name;
+pub use identity::{
+    AgentId, AgentIdentity, AnchorPayload, Sigchain, SigchainBody, SigchainLink, SignedEntry,
+    TrustState,
+};
 pub use ids::{event_id, media_id, room_id};
 pub use timestamp::{SequenceTimestamp, TimestampProvider, DEFAULT_EPOCH_MS};
-pub use identity::{AgentId, AgentIdentity, AnchorPayload, SignedEntry, Sigchain, SigchainBody, SigchainLink, TrustState};
-pub use identity::display::agent_display_name;
 
 /// Errors produced by agora-crypto operations.
 #[derive(Debug, thiserror::Error)]

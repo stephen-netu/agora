@@ -5,10 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{
-    identity::AgentId,
-    CryptoError,
-};
+use crate::{identity::AgentId, CryptoError};
 
 /// Abstract storage backend for cryptographic state.
 ///
@@ -25,25 +22,15 @@ pub trait CryptoStore: Send + Sync {
     /// Load the serialized Double Ratchet session state for a remote peer.
     ///
     /// Returns `Ok(None)` if no session exists for that peer.
-    fn load_ratchet_state(
-        &self,
-        remote_id: &AgentId,
-    ) -> Result<Option<Vec<u8>>, CryptoError>;
+    fn load_ratchet_state(&self, remote_id: &AgentId) -> Result<Option<Vec<u8>>, CryptoError>;
 
     /// Store a signed pre-key bundle identified by a 32-byte key ID.
-    fn store_prekey(
-        &mut self,
-        key_id: &[u8; 32],
-        prekey_bytes: &[u8],
-    ) -> Result<(), CryptoError>;
+    fn store_prekey(&mut self, key_id: &[u8; 32], prekey_bytes: &[u8]) -> Result<(), CryptoError>;
 
     /// Retrieve and remove a pre-key bundle (one-time use).
     ///
     /// Returns `Ok(None)` if the key ID is not present.
-    fn consume_prekey(
-        &mut self,
-        key_id: &[u8; 32],
-    ) -> Result<Option<Vec<u8>>, CryptoError>;
+    fn consume_prekey(&mut self, key_id: &[u8; 32]) -> Result<Option<Vec<u8>>, CryptoError>;
 
     /// Append a serialized sigchain link to the persistent log.
     fn append_sigchain(&mut self, link_bytes: &[u8]) -> Result<(), CryptoError>;
@@ -98,26 +85,16 @@ impl CryptoStore for MemoryStore {
         Ok(())
     }
 
-    fn load_ratchet_state(
-        &self,
-        remote_id: &AgentId,
-    ) -> Result<Option<Vec<u8>>, CryptoError> {
+    fn load_ratchet_state(&self, remote_id: &AgentId) -> Result<Option<Vec<u8>>, CryptoError> {
         Ok(self.ratchet_states.get(remote_id.as_bytes()).cloned())
     }
 
-    fn store_prekey(
-        &mut self,
-        key_id: &[u8; 32],
-        prekey_bytes: &[u8],
-    ) -> Result<(), CryptoError> {
+    fn store_prekey(&mut self, key_id: &[u8; 32], prekey_bytes: &[u8]) -> Result<(), CryptoError> {
         self.prekeys.insert(*key_id, prekey_bytes.to_vec());
         Ok(())
     }
 
-    fn consume_prekey(
-        &mut self,
-        key_id: &[u8; 32],
-    ) -> Result<Option<Vec<u8>>, CryptoError> {
+    fn consume_prekey(&mut self, key_id: &[u8; 32]) -> Result<Option<Vec<u8>>, CryptoError> {
         Ok(self.prekeys.remove(key_id))
     }
 
@@ -167,13 +144,9 @@ mod tests {
         let id = make_agent_id(0x01);
         let state = b"ratchet session bytes";
 
-        store
-            .store_ratchet_state(&id, state)
-            .expect("store failed");
+        store.store_ratchet_state(&id, state).expect("store failed");
 
-        let loaded = store
-            .load_ratchet_state(&id)
-            .expect("load failed");
+        let loaded = store.load_ratchet_state(&id).expect("load failed");
 
         assert_eq!(loaded, Some(state.to_vec()));
     }
@@ -191,8 +164,12 @@ mod tests {
         let mut store = MemoryStore::new();
         let id = make_agent_id(0x03);
 
-        store.store_ratchet_state(&id, b"v1").expect("store v1 failed");
-        store.store_ratchet_state(&id, b"v2").expect("store v2 failed");
+        store
+            .store_ratchet_state(&id, b"v1")
+            .expect("store v1 failed");
+        store
+            .store_ratchet_state(&id, b"v2")
+            .expect("store v2 failed");
 
         let loaded = store.load_ratchet_state(&id).expect("load failed");
         assert_eq!(loaded, Some(b"v2".to_vec()));
@@ -204,7 +181,9 @@ mod tests {
         let id_a = make_agent_id(0x0A);
         let id_b = make_agent_id(0x0B);
 
-        store.store_ratchet_state(&id_a, b"state-a").expect("store a failed");
+        store
+            .store_ratchet_state(&id_a, b"state-a")
+            .expect("store a failed");
 
         let loaded_b = store.load_ratchet_state(&id_b).expect("load b failed");
         assert_eq!(loaded_b, None);
@@ -225,7 +204,9 @@ mod tests {
         assert_eq!(first, Some(prekey.to_vec()));
 
         // Second consume returns None (one-time use).
-        let second = store.consume_prekey(&key_id).expect("second consume failed");
+        let second = store
+            .consume_prekey(&key_id)
+            .expect("second consume failed");
         assert_eq!(second, None);
     }
 
@@ -283,10 +264,7 @@ mod tests {
     fn test_default_produces_empty_store() {
         let store = MemoryStore::default();
         let id = make_agent_id(0x60);
-        assert_eq!(
-            store.load_ratchet_state(&id).expect("load failed"),
-            None
-        );
+        assert_eq!(store.load_ratchet_state(&id).expect("load failed"), None);
     }
 
     #[test]
@@ -300,11 +278,15 @@ mod tests {
         let mut store_b = MemoryStore::new();
 
         for (id, state) in ids.iter().zip(states.iter()) {
-            store_a.store_ratchet_state(id, state).expect("store a failed");
+            store_a
+                .store_ratchet_state(id, state)
+                .expect("store a failed");
         }
         // Insert in reverse order into store_b.
         for (id, state) in ids.iter().zip(states.iter()).rev() {
-            store_b.store_ratchet_state(id, state).expect("store b failed");
+            store_b
+                .store_ratchet_state(id, state)
+                .expect("store b failed");
         }
 
         let keys_a: Vec<[u8; 32]> = store_a.ratchet_states.keys().copied().collect();

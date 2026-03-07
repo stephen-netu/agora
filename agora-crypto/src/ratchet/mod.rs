@@ -250,8 +250,7 @@ impl RatchetSession {
             while self.recv_count < until {
                 let mk = chain_message_key(&current_ck);
                 current_ck = chain_advance(&current_ck);
-                self.skipped_keys
-                    .insert((remote_dh, self.recv_count), mk);
+                self.skipped_keys.insert((remote_dh, self.recv_count), mk);
                 self.recv_count += 1;
             }
 
@@ -272,20 +271,15 @@ impl RatchetSession {
             send_count: self.send_count,
             recv_count: self.recv_count,
             prev_chain_length: self.prev_chain_length,
-            skipped_keys: self
-                .skipped_keys
-                .iter()
-                .map(|(k, v)| (*k, v.0))
-                .collect(),
+            skipped_keys: self.skipped_keys.iter().map(|(k, v)| (*k, v.0)).collect(),
         };
-        rmp_serde::to_vec_named(&snapshot)
-            .map_err(|e| CryptoError::Encoding(e.to_string()))
+        rmp_serde::to_vec_named(&snapshot).map_err(|e| CryptoError::Encoding(e.to_string()))
     }
 
     /// Restore session from serialized bytes.
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self, CryptoError> {
-        let snap: RatchetSessionSnapshot = rmp_serde::from_slice(bytes)
-            .map_err(|e| CryptoError::Decoding(e.to_string()))?;
+        let snap: RatchetSessionSnapshot =
+            rmp_serde::from_slice(bytes).map_err(|e| CryptoError::Decoding(e.to_string()))?;
 
         Ok(Self {
             dh_pair: RatchetKeyPair::from_seed(snap.dh_pair_seed),
@@ -334,7 +328,13 @@ fn aead_encrypt(
     let nonce = GenericArray::from_slice(&nonce_src[..12]);
     let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key.0));
     cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad: associated_data })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad: associated_data,
+            },
+        )
         .map_err(|e| CryptoError::Encryption(e.to_string()))
 }
 
@@ -354,7 +354,13 @@ fn aead_decrypt(
     let nonce = GenericArray::from_slice(&nonce_src[..12]);
     let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(&key.0));
     cipher
-        .decrypt(nonce, Payload { msg: ciphertext, aad: associated_data })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad: associated_data,
+            },
+        )
         .map_err(|e| CryptoError::Decryption(e.to_string()))
 }
 
@@ -368,8 +374,8 @@ mod tests {
         let bob_pair = RatchetKeyPair::from_seed(bob_seed);
         let alice_seed = [0x02u8; 32];
 
-        let alice = RatchetSession::init_alice(&secret, &bob_pair.public.to_bytes(), alice_seed)
-            .unwrap();
+        let alice =
+            RatchetSession::init_alice(&secret, &bob_pair.public.to_bytes(), alice_seed).unwrap();
         let bob = RatchetSession::init_bob(&secret, bob_seed).unwrap();
         (alice, bob)
     }

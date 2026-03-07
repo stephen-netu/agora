@@ -23,11 +23,11 @@ use std::collections::BTreeMap;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use blake3;
+use chacha20poly1305::aead::generic_array::GenericArray;
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
     ChaCha20Poly1305,
 };
-use chacha20poly1305::aead::generic_array::GenericArray;
 use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,13 @@ fn aead_encrypt(
     let nonce = GenericArray::from_slice(&nonce_src[..12]);
     let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(message_key));
     cipher
-        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .encrypt(
+            nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| CryptoError::Encryption(e.to_string()))
 }
 
@@ -84,7 +90,13 @@ fn aead_decrypt(
     let nonce = GenericArray::from_slice(&nonce_src[..12]);
     let cipher = ChaCha20Poly1305::new(GenericArray::from_slice(message_key));
     cipher
-        .decrypt(nonce, Payload { msg: ciphertext, aad })
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|e| CryptoError::Decryption(e.to_string()))
 }
 
@@ -106,14 +118,16 @@ pub struct GroupMessage {
 impl GroupMessage {
     /// Encode to standard base64 (msgpack payload).
     pub fn to_base64(&self) -> Result<String, CryptoError> {
-        let bytes = rmp_serde::to_vec_named(self)
-            .map_err(|e| CryptoError::Encoding(e.to_string()))?;
+        let bytes =
+            rmp_serde::to_vec_named(self).map_err(|e| CryptoError::Encoding(e.to_string()))?;
         Ok(B64.encode(bytes))
     }
 
     /// Decode from standard base64.
     pub fn from_base64(s: &str) -> Result<Self, CryptoError> {
-        let bytes = B64.decode(s).map_err(|e| CryptoError::Decoding(e.to_string()))?;
+        let bytes = B64
+            .decode(s)
+            .map_err(|e| CryptoError::Decoding(e.to_string()))?;
         rmp_serde::from_slice(&bytes).map_err(|e| CryptoError::Decoding(e.to_string()))
     }
 }
@@ -135,14 +149,16 @@ pub struct GroupSessionKey {
 impl GroupSessionKey {
     /// Encode to standard base64.
     pub fn to_base64(&self) -> Result<String, CryptoError> {
-        let bytes = rmp_serde::to_vec_named(self)
-            .map_err(|e| CryptoError::Encoding(e.to_string()))?;
+        let bytes =
+            rmp_serde::to_vec_named(self).map_err(|e| CryptoError::Encoding(e.to_string()))?;
         Ok(B64.encode(bytes))
     }
 
     /// Decode from standard base64.
     pub fn from_base64(s: &str) -> Result<Self, CryptoError> {
-        let bytes = B64.decode(s).map_err(|e| CryptoError::Decoding(e.to_string()))?;
+        let bytes = B64
+            .decode(s)
+            .map_err(|e| CryptoError::Decoding(e.to_string()))?;
         rmp_serde::from_slice(&bytes).map_err(|e| CryptoError::Decoding(e.to_string()))
     }
 }
@@ -210,7 +226,8 @@ impl OutboundGroupSession {
             ciphertext,
         };
         self.chain_key = chain_advance(&self.chain_key);
-        self.message_index = self.message_index
+        self.message_index = self
+            .message_index
             .checked_add(1)
             .ok_or(CryptoError::SequenceOverflow)?;
         Ok(msg)
@@ -285,6 +302,7 @@ impl InboundGroupSession {
 
         let ahead = msg.message_index - self.message_index;
         if ahead > MAX_SKIP {
+            #[allow(clippy::cast_possible_truncation)]
             return Err(CryptoError::MaxSkipExceeded {
                 limit: MAX_SKIP as u32,
                 got: ahead as u32,
@@ -305,7 +323,8 @@ impl InboundGroupSession {
         let plaintext = aead_decrypt(&mk, &aad, &msg.ciphertext)?;
 
         self.chain_key = chain_advance(&self.chain_key);
-        self.message_index = self.message_index
+        self.message_index = self
+            .message_index
             .checked_add(1)
             .ok_or(CryptoError::SequenceOverflow)?;
 

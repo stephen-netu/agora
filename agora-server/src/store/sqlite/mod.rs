@@ -187,10 +187,6 @@ impl SqliteStore {
 
         Ok(())
     }
-
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
 }
 
 fn row_to_event(r: &sqlx::sqlite::SqliteRow) -> RoomEvent {

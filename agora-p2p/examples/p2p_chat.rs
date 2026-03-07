@@ -8,7 +8,7 @@
 
 use agora_p2p::{P2pNode, P2pConfig, MeshEvent};
 use agora_crypto::AgentIdentity;
-use rand::Rng;
+use rand::RngCore;
 use std::io::{self, Write};
 
 #[tokio::main]
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(0);
 
     let mut seed = [0u8; 32];
-    rand::thread_rng().fill(&mut seed);
+    rand::rng().fill_bytes(&mut seed);
     let identity = AgentIdentity::from_seed(&seed);
     let agent_id = identity.agent_id.clone();
     

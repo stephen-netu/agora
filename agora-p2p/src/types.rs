@@ -88,7 +88,7 @@ pub enum WanDiscoveryMode {
     #[default]
     Disabled,
     /// Use specific bootstrap nodes for WAN discovery
-    Bootstrap(Vec<String>),
+    Bootstrap(Vec<Multiaddr>),
     /// Use public/default bootstrap nodes for WAN discovery
     Public,
 }
@@ -166,6 +166,10 @@ impl Default for TransportMode {
         TransportMode::Auto
     }
 }
+
+/// Multiaddress type for P2P connections (simple string wrapper)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Multiaddr(pub String);
 
 impl std::fmt::Debug for TransportMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

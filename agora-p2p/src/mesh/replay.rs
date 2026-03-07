@@ -87,6 +87,7 @@ impl ReplayProtection {
 
     /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX for replay protection diagnostics
     /// Get the count of tracked sequences for a peer.
+    #[allow(dead_code)]
     pub async fn sequence_count(&self, peer_id: &AgentId) -> usize {
         self.sequences
             .read()

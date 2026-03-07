@@ -337,8 +337,6 @@ pub struct SigchainLinkRecord {
 pub enum StorageError {
     #[error("database error: {0}")]
     Database(String),
-    #[error("not found")]
-    NotFound,
     #[error("conflict: {0}")]
     Conflict(String),
 }

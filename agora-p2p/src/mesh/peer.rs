@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use agora_crypto::identity::TrustState;
 use agora_crypto::AgentId;
-use quinn::SendStream;
+use quinn;
 use tokio::sync::{mpsc, RwLock};
 
 use crate::error::Error;
@@ -13,10 +13,7 @@ use crate::transport::quic::{read_message, QuicConnection, QuicTransport};
 use crate::protocol::{decode, AmpMessage, Capabilities};
 use super::replay::ReplayProtection;
 
-// IMPLEMENTATION_REQUIRED: peer and sender fields needed for peer connection handling
 pub struct ConnectedPeer {
-    pub peer: Peer,
-    pub sender: SendStream,
     pub connection: QuicConnection,
 }
 
@@ -136,8 +133,6 @@ impl MeshManager {
                 }
 
                 let connected_peer = ConnectedPeer {
-                    peer: peer.clone(),
-                    sender: send,
                     connection: connection.clone(),
                 };
 
@@ -295,17 +290,10 @@ impl MeshManager {
                     return;
                 }
 
-                let peer = crate::types::Peer {
-                    agent_id: peer_agent_id.clone(),
-                    addresses: vec![connection.remote_addr.to_string()],
-                };
-
                 let mut connection = connection;
                 connection.peer_id = peer_agent_id.clone();
 
                 let connected_peer = ConnectedPeer {
-                    peer,
-                    sender: send,
                     connection: connection.clone(),
                 };
 
@@ -360,20 +348,5 @@ impl MeshManager {
             self.replay_protection.remove_peer(peer_id).await;
             let _ = self.events.send(MeshEvent::Disconnected(peer_id.clone())).await;
         }
-    }
-
-    /// Set trust state for a peer.
-    pub async fn set_trust(&self, peer_id: &AgentId, state: TrustState) {
-        self.trust_registry.write().await.insert(peer_id.clone(), state);
-    }
-
-    /// Get trust state for a peer. Returns TrustState::Untrusted if not found.
-    pub async fn get_trust(&self, peer_id: &AgentId) -> TrustState {
-        self.trust_registry
-            .read()
-            .await
-            .get(peer_id)
-            .cloned()
-            .unwrap_or(TrustState::Untrusted)
     }
 }

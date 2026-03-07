@@ -281,3 +281,108 @@ pub fn append_sigchain_action(
     let agent_id = machine.agent_id_hex().ok_or("sigchain not initialized")?;
     Ok(SigchainActionProof { seqno: link.seqno, agent_id })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    // ─────────────────────────────────────────────────────────────────────────────
+    // get_agent_display_name command tests
+    // ─────────────────────────────────────────────────────────────────────────────
+    
+    #[test]
+    fn test_get_agent_display_name_valid_hex() {
+        // Test with all zeros
+        let result = get_agent_display_name(
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+        );
+        assert!(result.is_ok());
+        let name = result.unwrap();
+        assert!(name.contains('-'));
+        assert!(name.contains('#'));
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_known_vector() {
+        // Test with a known AgentId - from agora-crypto test vectors
+        let hex = "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe";
+        let result = get_agent_display_name(hex.to_string());
+        assert!(result.is_ok(), "Failed with: {:?}", result);
+        let name = result.unwrap();
+        
+        // Should be in format word-word#NNNN
+        assert!(name.contains('-'));
+        assert!(name.contains('#'));
+        let parts: Vec<&str> = name.split('#').collect();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].len(), 4);
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_invalid_hex() {
+        // Test with invalid hex (odd number of characters)
+        let result = get_agent_display_name("abc".to_string());
+        assert!(result.is_err());
+        
+        // Test with invalid characters
+        let result = get_agent_display_name(
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string()
+        );
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_wrong_length() {
+        // Test with too short hex
+        let result = get_agent_display_name("abc".to_string());
+        assert!(result.is_err());
+        
+        // Test with too long hex (65 chars instead of 64)
+        let result = get_agent_display_name(
+            "00000000000000000000000000000000000000000000000000000000000000000".to_string()
+        );
+        assert!(result.is_err());
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_deterministic() {
+        let hex = "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe";
+        
+        let result1 = get_agent_display_name(hex.to_string()).unwrap();
+        let result2 = get_agent_display_name(hex.to_string()).unwrap();
+        
+        assert_eq!(result1, result2, "Same hex should produce same display name");
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_different_ids_different_names() {
+        // Change byte[0] to get different adjectives (first byte in hex is first 2 chars)
+        let hex1 = "0000000000000000000000000000000000000000000000000000000000000000";
+        let hex2 = "0100000000000000000000000000000000000000000000000000000000000000";
+        
+        let name1 = get_agent_display_name(hex1.to_string()).unwrap();
+        let name2 = get_agent_display_name(hex2.to_string()).unwrap();
+        
+        // They should differ - changing first byte changes adjective
+        assert_ne!(name1, name2, "Different AgentIds should produce different names");
+    }
+    
+    #[test]
+    fn test_get_agent_display_name_matches_agora_crypto() {
+        // Verify that the Tauri command produces the same result as the direct function
+        use agora_crypto::{AgentId, agent_display_name};
+        
+        let hex = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        
+        let command_result = get_agent_display_name(hex.to_string()).unwrap();
+        let direct_result = {
+            let agent_id = AgentId::from_hex(hex).unwrap();
+            agent_display_name(&agent_id)
+        };
+        
+        assert_eq!(
+            command_result, direct_result,
+            "Tauri command should produce same result as direct function call"
+        );
+    }
+}

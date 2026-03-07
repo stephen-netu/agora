@@ -102,10 +102,7 @@ mod tests {
     fn deterministic_from_same_offset() {
         let ts1 = SequenceTimestamp::new(1_000_000);
         let ts2 = SequenceTimestamp::new(1_000_000);
-        assert_eq!(
-            ts1.next_timestamp().unwrap(),
-            ts2.next_timestamp().unwrap()
-        );
+        assert_eq!(ts1.next_timestamp().unwrap(), ts2.next_timestamp().unwrap());
     }
 
     #[test]

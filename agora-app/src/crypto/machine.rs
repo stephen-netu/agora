@@ -12,27 +12,30 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use agora_crypto::account::{Account, AgoraSignature};
-use agora_crypto::group::{GroupSessionKey, InboundGroupSession, OutboundGroupSession};
+use agora_crypto::group::{GroupSessionKey, InboundGroupSession};
 use agora_crypto::timestamp::{SequenceTimestamp, TimestampProvider};
 use agora_crypto::{AgentId, AgentIdentity, Sigchain, SigchainBody, SigchainLink};
 use rand_core::{OsRng, RngCore};
 
 use super::sessions::{
-    pickle_inbound_group, pickle_outbound_group, pickle_pairwise_session,
+    pickle_inbound_group, pickle_pairwise_session,
     unpickle_inbound_group, unpickle_outbound_group, unpickle_pairwise_session,
 };
-use super::store::{CryptoStore, InboundGroupSessionData, OutboundGroupSessionData};
+use super::store::{CryptoStore, InboundGroupSessionData};
+
+// Import manager modules for delegation
+use super::megolm::MegolmManager;
+use super::olm::OlmManager;
 
 const MAX_OTK_COUNT: u64 = 50;
 const OTK_UPLOAD_THRESHOLD: u64 = 25;
-const MEGOLM_ROTATION_MESSAGE_COUNT: u64 = 100;
 
 pub struct CryptoMachine {
     pub user_id: String,
     pub device_id: String,
     account: Account,
     store: CryptoStore,
-    timestamp: Arc<dyn TimestampProvider>,
+    _timestamp: Arc<dyn TimestampProvider>,
     /// Agent identity for sigchain signing. `None` until `init_sigchain()`.
     identity: Option<AgentIdentity>,
     /// Append-only behavioral ledger. `None` until `init_sigchain()`.
@@ -90,7 +93,7 @@ impl CryptoMachine {
         // Defaults to 2024-03-01 as epoch offset so IDs stay in a sane numeric
         // range. Replace with SequenceTimestamp::resume_from(offset, last_seq)
         // once the last sequence is persisted in the store.
-        let timestamp: Arc<dyn TimestampProvider> = Arc::new(SequenceTimestamp::default());
+        let _timestamp: Arc<dyn TimestampProvider> = Arc::new(SequenceTimestamp::default());
 
         // Load sigchain identity and chain from store if available.
         let (identity, chain) = load_sigchain_from_store(&store)
@@ -101,7 +104,7 @@ impl CryptoMachine {
             device_id: device_id.to_owned(),
             account,
             store,
-            timestamp,
+            _timestamp,
             identity,
             chain,
         };
@@ -359,88 +362,18 @@ impl CryptoMachine {
         event_type: &str,
         content: &Value,
     ) -> Result<EncryptedPayload, String> {
-        let mut session = self.get_or_create_outbound_session(room_id)?;
-
-        let plaintext_payload = serde_json::json!({
-            "type": event_type,
-            "content": content,
-            "room_id": room_id,
-        });
-        let plaintext =
-            serde_json::to_string(&plaintext_payload).map_err(|e| format!("serialize: {e}"))?;
-
-        let msg = session.encrypt(plaintext.as_bytes()).map_err(|e| format!("encrypt: {e}"))?;
-        let session_id = session.session_id();
-        let ciphertext = msg.to_base64().map_err(|e| format!("encode msg: {e}"))?;
+        // Delegate to MegolmManager
         let (sender_key, _) = self.identity_keys();
-
-        let data = self
-            .store
-            .data
-            .outbound_group_sessions
-            .get_mut(room_id)
-            .unwrap();
-        data.message_count += 1;
-        data.pickle = pickle_outbound_group(&session)?;
-        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
-
+        let mut manager = MegolmManager::new(&mut self.store, sender_key);
+        let (algorithm, sender_key, ciphertext, session_id) =
+            manager.encrypt_room_event(room_id, event_type, content)?;
         Ok(EncryptedPayload {
-            algorithm: "m.agora.group.v1".to_owned(),
+            algorithm,
             sender_key,
             ciphertext,
             session_id,
             device_id: self.device_id.clone(),
         })
-    }
-
-    fn get_or_create_outbound_session(
-        &mut self,
-        room_id: &str,
-    ) -> Result<OutboundGroupSession, String> {
-        if let Some(data) = self.store.data.outbound_group_sessions.get(room_id) {
-            if data.message_count < MEGOLM_ROTATION_MESSAGE_COUNT {
-                return unpickle_outbound_group(&data.pickle);
-            }
-        }
-        self.create_outbound_session(room_id)
-    }
-
-    fn create_outbound_session(&mut self, room_id: &str) -> Result<OutboundGroupSession, String> {
-        let session =
-            OutboundGroupSession::new().map_err(|e| format!("create group session: {e}"))?;
-        let session_id = session.session_id();
-        let session_key = session.session_key();
-        let (sender_key, _) = self.identity_keys();
-
-        let inbound = InboundGroupSession::new(&session_key);
-        let igs_key = CryptoStore::inbound_session_key(room_id, &sender_key, &session_id);
-        self.store.data.inbound_group_sessions.insert(
-            igs_key,
-            InboundGroupSessionData {
-                pickle: pickle_inbound_group(&inbound)?,
-                sender_key: sender_key.clone(),
-                signing_key: None,
-                room_id: room_id.to_owned(),
-            },
-        );
-
-        let created_at = self
-            .timestamp
-            .next_timestamp()
-            .map_err(|e| format!("timestamp overflow: {e}"))?;
-        self.store.data.outbound_group_sessions.insert(
-            room_id.to_owned(),
-            OutboundGroupSessionData {
-                pickle: pickle_outbound_group(&session)?,
-                session_id,
-                created_at,
-                message_count: 0,
-            },
-        );
-
-        self.store.data.shared_sessions.remove(room_id);
-        self.store.save().map_err(|e| format!("persist group state: {e}"))?;
-        Ok(session)
     }
 
     pub fn get_room_key_content(&self, room_id: &str) -> Option<RoomKeyContent> {
@@ -508,40 +441,10 @@ impl CryptoMachine {
         _recipient_ed_key: &str,
         plaintext: &str,
     ) -> Result<Value, String> {
-        let mut session = self.get_existing_pairwise_session(recipient_curve_key)?;
-        let (msg_type, body) =
-            session.encrypt(plaintext.as_bytes()).map_err(|e| format!("encrypt: {e}"))?;
-
-        self.store.data.olm_sessions.insert(
-            recipient_curve_key.to_owned(),
-            vec![pickle_pairwise_session(&session)?],
-        );
-        self.store.save().map_err(|e| format!("persist pairwise state: {e}"))?;
-
-        let (our_curve, _) = self.identity_keys();
-        let mut ciphertext = serde_json::Map::new();
-        ciphertext.insert(
-            recipient_curve_key.to_owned(),
-            serde_json::json!({ "type": msg_type, "body": body }),
-        );
-
-        Ok(serde_json::json!({
-            "algorithm": "m.agora.pairwise.v1",
-            "sender_key": our_curve,
-            "ciphertext": ciphertext,
-        }))
-    }
-
-    fn get_existing_pairwise_session(
-        &mut self,
-        curve_key: &str,
-    ) -> Result<agora_crypto::account::PairwiseSession, String> {
-        if let Some(pickles) = self.store.data.olm_sessions.get(curve_key) {
-            if let Some(last) = pickles.last() {
-                return unpickle_pairwise_session(last);
-            }
-        }
-        Err("no existing pairwise session — must create from claimed OTK first".to_owned())
+        // Delegate to OlmManager
+        let (our_curve_key, _) = self.identity_keys();
+        let mut manager = OlmManager::new(&mut self.account, &mut self.store);
+        manager.encrypt(&our_curve_key, recipient_curve_key, plaintext)
     }
 
     pub fn create_outbound_olm_from_otk(
@@ -550,19 +453,10 @@ impl CryptoMachine {
         one_time_key_b64: &str,
         otk_counter: Option<u64>,
     ) -> Result<(), String> {
-        let session = self
-            .account
-            .create_outbound_session(their_curve_key, one_time_key_b64, otk_counter)
-            .map_err(|e| format!("create outbound session: {e}"))?;
-
-        self.store
-            .data
-            .olm_sessions
-            .entry(their_curve_key.to_owned())
-            .or_default()
-            .push(pickle_pairwise_session(&session)?);
-        let _ = self.persist_account();
-        Ok(())
+        // Delegate to OlmManager
+        let mut manager = OlmManager::new(&mut self.account, &mut self.store);
+        manager.create_outbound_session_from_otk(their_curve_key, one_time_key_b64, otk_counter)?;
+        self.persist_account()
     }
 
     // ── Pairwise decryption ───────────────────────────────────────────────────

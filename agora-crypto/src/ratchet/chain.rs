@@ -7,9 +7,9 @@
 //! HKDF-SHA256 is used for the root chain.
 //! HMAC-SHA256 is used for the symmetric chain steps.
 
+use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use hkdf::Hkdf;
 
 use super::keys::{ChainKey, MessageKey, RootKey};
 
@@ -42,8 +42,7 @@ pub fn root_kdf(root_key: &RootKey, dh_output: &[u8; 32]) -> (RootKey, ChainKey)
 ///
 /// HMAC-SHA256(chain_key, 0x01) → message_key
 pub fn chain_message_key(chain_key: &ChainKey) -> MessageKey {
-    let mut mac = HmacSha256::new_from_slice(&chain_key.0)
-        .expect("HMAC: any key size is valid");
+    let mut mac = HmacSha256::new_from_slice(&chain_key.0).expect("HMAC: any key size is valid");
     mac.update(MESSAGE_KEY_INPUT);
     let result = mac.finalize().into_bytes();
     let mut mk = [0u8; 32];
@@ -55,8 +54,7 @@ pub fn chain_message_key(chain_key: &ChainKey) -> MessageKey {
 ///
 /// HMAC-SHA256(chain_key, 0x02) → next_chain_key
 pub fn chain_advance(chain_key: &ChainKey) -> ChainKey {
-    let mut mac = HmacSha256::new_from_slice(&chain_key.0)
-        .expect("HMAC: any key size is valid");
+    let mut mac = HmacSha256::new_from_slice(&chain_key.0).expect("HMAC: any key size is valid");
     mac.update(CHAIN_KEY_INPUT);
     let result = mac.finalize().into_bytes();
     let mut ck = [0u8; 32];
@@ -72,29 +70,29 @@ mod tests {
     fn root_kdf_deterministic() {
         let rk = RootKey([0x42u8; 32]);
         let dh = [0x13u8; 32];
-        let (new_rk1, new_ck1) = root_kdf(&rk, &dh);
-        let (new_rk2, new_ck2) = root_kdf(&rk, &dh);
-        assert_eq!(new_rk1.0, new_rk2.0);
-        assert_eq!(new_ck1.0, new_ck2.0);
+        let (root_key_out, chain_key_out) = root_kdf(&rk, &dh);
+        let (root_key_2, chain_key_2) = root_kdf(&rk, &dh);
+        assert_eq!(root_key_out.0, root_key_2.0);
+        assert_eq!(chain_key_out.0, chain_key_2.0);
     }
 
     #[test]
     fn root_kdf_produces_different_rk_and_ck() {
         let rk = RootKey([0x01u8; 32]);
         let dh = [0x02u8; 32];
-        let (new_rk, new_ck) = root_kdf(&rk, &dh);
+        let (rk_out, ck_out) = root_kdf(&rk, &dh);
         // Root key and chain key must differ
-        assert_ne!(new_rk.0, new_ck.0);
+        assert_ne!(rk_out.0, ck_out.0);
         // They must differ from the input root key
-        assert_ne!(new_rk.0, rk.0);
+        assert_ne!(rk_out.0, rk.0);
     }
 
     #[test]
     fn chain_advance_is_deterministic() {
         let ck = ChainKey([0xABu8; 32]);
-        let ck2a = chain_advance(&ck);
-        let ck2b = chain_advance(&ck);
-        assert_eq!(ck2a.0, ck2b.0);
+        let chain_key_after_first = chain_advance(&ck);
+        let chain_key_after_second = chain_advance(&ck);
+        assert_eq!(chain_key_after_first.0, chain_key_after_second.0);
     }
 
     #[test]

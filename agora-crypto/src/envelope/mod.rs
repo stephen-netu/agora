@@ -4,10 +4,7 @@
 //! ChaCha20-Poly1305 AEAD, with Ed25519 attached signing.
 
 use blake3;
-use chacha20poly1305::{
-    ChaCha20Poly1305, KeyInit,
-    aead::Aead,
-};
+use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
@@ -73,14 +70,12 @@ const CHUNK_SIZE: usize = 1024 * 1024; // 1 MiB
 
 /// Serialize an envelope to MessagePack.
 pub fn encode(envelope: &SovereignEnvelope) -> Result<Vec<u8>, CryptoError> {
-    rmp_serde::to_vec_named(envelope)
-        .map_err(|e| CryptoError::Encoding(e.to_string()))
+    rmp_serde::to_vec_named(envelope).map_err(|e| CryptoError::Encoding(e.to_string()))
 }
 
 /// Deserialize an envelope from MessagePack.
 pub fn decode(bytes: &[u8]) -> Result<SovereignEnvelope, CryptoError> {
-    rmp_serde::from_slice(bytes)
-        .map_err(|e| CryptoError::Decoding(e.to_string()))
+    rmp_serde::from_slice(bytes).map_err(|e| CryptoError::Decoding(e.to_string()))
 }
 
 /// Encrypt `plaintext` to one or more X25519 recipients.
@@ -91,7 +86,7 @@ pub fn decode(bytes: &[u8]) -> Result<SovereignEnvelope, CryptoError> {
 pub fn encrypt(
     plaintext: &[u8],
     recipients: &[x25519_dalek::PublicKey],
-    ephemeral_secret: x25519_dalek::StaticSecret,
+    ephemeral_secret: &x25519_dalek::StaticSecret,
 ) -> Result<SovereignEnvelope, CryptoError> {
     if recipients.is_empty() {
         return Err(CryptoError::Encryption(
@@ -99,7 +94,7 @@ pub fn encrypt(
         ));
     }
 
-    let ephemeral_public_key = x25519_dalek::PublicKey::from(&ephemeral_secret);
+    let ephemeral_public_key = x25519_dalek::PublicKey::from(ephemeral_secret);
     let ephemeral_public: [u8; 32] = *ephemeral_public_key.as_bytes();
 
     // Snapshot the secret bytes so we can reconstruct the secret for each recipient DH.
@@ -121,8 +116,7 @@ pub fn encrypt(
     let mut recipient_entries: Vec<RecipientEntry> = Vec::with_capacity(recipients.len());
 
     for recipient_pub in recipients {
-        let recipient_id: [u8; 32] =
-            *blake3::hash(recipient_pub.as_bytes()).as_bytes();
+        let recipient_id: [u8; 32] = *blake3::hash(recipient_pub.as_bytes()).as_bytes();
 
         // Nonce for wrapping the payload key: BLAKE3(recipient_pubkey || "payload_key_nonce")
         let mut nonce_input = Vec::with_capacity(32 + 16);
@@ -169,6 +163,7 @@ pub fn encrypt(
     let mut payload_chunks: Vec<EncryptedChunk> = Vec::with_capacity(total);
 
     for (idx, chunk) in chunks_raw.iter().enumerate() {
+        #[allow(clippy::cast_possible_truncation)]
         let sequence = idx as u32;
         let is_final = idx == total - 1;
 
@@ -293,16 +288,13 @@ pub fn sign_attached(
         payload: payload.to_vec(),
     };
 
-    rmp_serde::to_vec_named(&wire)
-        .map_err(|e| CryptoError::Encoding(e.to_string()))
+    rmp_serde::to_vec_named(&wire).map_err(|e| CryptoError::Encoding(e.to_string()))
 }
 
 /// Verify a signed envelope and return the signer's verifying key plus the payload.
-pub fn verify_attached(
-    signed_bytes: &[u8],
-) -> Result<(VerifyingKey, Vec<u8>), CryptoError> {
-    let wire: SignedEnvelopeWire = rmp_serde::from_slice(signed_bytes)
-        .map_err(|e| CryptoError::Decoding(e.to_string()))?;
+pub fn verify_attached(signed_bytes: &[u8]) -> Result<(VerifyingKey, Vec<u8>), CryptoError> {
+    let wire: SignedEnvelopeWire =
+        rmp_serde::from_slice(signed_bytes).map_err(|e| CryptoError::Decoding(e.to_string()))?;
 
     if wire.format != "sovereign-signed" {
         return Err(CryptoError::InvalidSignature(format!(
@@ -368,16 +360,15 @@ mod tests {
         let ephemeral = make_ephemeral();
         let plaintext = b"hello, sovereign world!";
 
-        let envelope = encrypt(plaintext, &[recipient_pub], ephemeral)
-            .expect("encrypt failed");
+        let envelope = encrypt(plaintext, &[recipient_pub], &ephemeral).expect("encrypt failed");
 
         assert_eq!(envelope.format, "sovereign-envelope");
         assert_eq!(envelope.version, [1, 0]);
         assert_eq!(envelope.recipients.len(), 1);
         assert!(!envelope.payload_chunks.is_empty());
 
-        let recovered = decrypt(&envelope, &recipient_secret, &recipient_pub)
-            .expect("decrypt failed");
+        let recovered =
+            decrypt(&envelope, &recipient_secret, &recipient_pub).expect("decrypt failed");
 
         assert_eq!(recovered, plaintext);
     }
@@ -395,8 +386,7 @@ mod tests {
         let ephemeral = StaticSecret::from([0xABu8; 32]);
         let plaintext = b"multi-recipient test";
 
-        let envelope = encrypt(plaintext, &[pub_a, pub_b], ephemeral)
-            .expect("encrypt failed");
+        let envelope = encrypt(plaintext, &[pub_a, pub_b], &ephemeral).expect("encrypt failed");
 
         assert_eq!(envelope.recipients.len(), 2);
 
@@ -412,15 +402,17 @@ mod tests {
         let (recipient_secret, recipient_pub) = make_recipient();
         let ephemeral = make_ephemeral();
         // 2.5 MiB — forces three chunks.
-        let plaintext: Vec<u8> = (0u8..=255).cycle().take(2 * 1024 * 1024 + 512 * 1024).collect();
+        let plaintext: Vec<u8> = (0u8..=255)
+            .cycle()
+            .take(2 * 1024 * 1024 + 512 * 1024)
+            .collect();
 
-        let envelope = encrypt(&plaintext, &[recipient_pub], ephemeral)
-            .expect("encrypt failed");
+        let envelope = encrypt(&plaintext, &[recipient_pub], &ephemeral).expect("encrypt failed");
 
         assert_eq!(envelope.payload_chunks.len(), 3);
 
-        let recovered = decrypt(&envelope, &recipient_secret, &recipient_pub)
-            .expect("decrypt failed");
+        let recovered =
+            decrypt(&envelope, &recipient_secret, &recipient_pub).expect("decrypt failed");
 
         assert_eq!(recovered, plaintext);
     }
@@ -434,7 +426,7 @@ mod tests {
             x25519_dalek::PublicKey::from(&s)
         });
 
-        let envelope = encrypt(b"secret", &[pub_a], ephemeral).expect("encrypt failed");
+        let envelope = encrypt(b"secret", &[pub_a], &ephemeral).expect("encrypt failed");
         let result = decrypt(&envelope, &secret_b, &pub_b);
         assert!(result.is_err(), "decrypt by wrong recipient should fail");
     }
@@ -442,7 +434,7 @@ mod tests {
     #[test]
     fn test_encrypt_empty_recipients_fails() {
         let ephemeral = make_ephemeral();
-        let result = encrypt(b"data", &[], ephemeral);
+        let result = encrypt(b"data", &[], &ephemeral);
         assert!(result.is_err());
     }
 
@@ -472,7 +464,10 @@ mod tests {
         }
 
         let result = verify_attached(&signed);
-        assert!(result.is_err(), "tampered envelope should fail verification");
+        assert!(
+            result.is_err(),
+            "tampered envelope should fail verification"
+        );
     }
 
     #[test]
@@ -481,13 +476,12 @@ mod tests {
         let ephemeral = make_ephemeral();
         let plaintext = b"roundtrip via msgpack";
 
-        let envelope = encrypt(plaintext, &[recipient_pub], ephemeral)
-            .expect("encrypt failed");
+        let envelope = encrypt(plaintext, &[recipient_pub], &ephemeral).expect("encrypt failed");
 
         let bytes = encode(&envelope).expect("encode failed");
         let decoded = decode(&bytes).expect("decode failed");
-        let recovered = decrypt(&decoded, &recipient_secret, &recipient_pub)
-            .expect("decrypt failed");
+        let recovered =
+            decrypt(&decoded, &recipient_secret, &recipient_pub).expect("decrypt failed");
 
         assert_eq!(recovered, plaintext);
     }
@@ -497,9 +491,9 @@ mod tests {
         let (recipient_secret, recipient_pub) = make_recipient();
         let ephemeral = make_ephemeral();
 
-        let envelope = encrypt(&[], &[recipient_pub], ephemeral).expect("encrypt failed");
-        let recovered = decrypt(&envelope, &recipient_secret, &recipient_pub)
-            .expect("decrypt failed");
+        let envelope = encrypt(&[], &[recipient_pub], &ephemeral).expect("encrypt failed");
+        let recovered =
+            decrypt(&envelope, &recipient_secret, &recipient_pub).expect("decrypt failed");
 
         assert_eq!(recovered, b"");
     }

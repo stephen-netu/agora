@@ -47,7 +47,8 @@ use crate::{
 fn hkdf32(ikm: &[u8], salt: &[u8], info: &[u8]) -> [u8; 32] {
     let (_, hk) = Hkdf::<Sha256>::extract(Some(salt), ikm);
     let mut okm = [0u8; 32];
-    hk.expand(info, &mut okm).expect("HKDF expand 32 bytes is valid");
+    hk.expand(info, &mut okm)
+        .expect("HKDF expand 32 bytes is valid");
     okm
 }
 
@@ -56,7 +57,11 @@ fn derive_identity_x25519(seed: &[u8; 32]) -> x25519_dalek::StaticSecret {
 }
 
 fn derive_otk(seed: &[u8; 32], counter: u64) -> x25519_dalek::StaticSecret {
-    let ikm: Vec<u8> = seed.iter().chain(counter.to_le_bytes().iter()).copied().collect();
+    let ikm: Vec<u8> = seed
+        .iter()
+        .chain(counter.to_le_bytes().iter())
+        .copied()
+        .collect();
     x25519_dalek::StaticSecret::from(hkdf32(&ikm, b"agora-account", b"otk"))
 }
 
@@ -206,9 +211,11 @@ impl PairwiseSession {
     ///
     /// Also clears the prekey state, transitioning the session to Normal mode.
     pub fn decrypt_normal(&mut self, body: &str) -> Result<Vec<u8>, CryptoError> {
-        let bytes = B64.decode(body).map_err(|e| CryptoError::Decoding(e.to_string()))?;
-        let env: NormalEnvelope = rmp_serde::from_slice(&bytes)
+        let bytes = B64
+            .decode(body)
             .map_err(|e| CryptoError::Decoding(e.to_string()))?;
+        let env: NormalEnvelope =
+            rmp_serde::from_slice(&bytes).map_err(|e| CryptoError::Decoding(e.to_string()))?;
         let header = bytes_to_header(&env.hdr)?;
         let pt = self.ratchet.decrypt(&header, &env.ct, b"")?;
         // Receiving any message confirms the session; switch to Normal mode.
@@ -294,7 +301,10 @@ impl Account {
     pub fn identity_keys(&self) -> (String, String) {
         let x25519_pub = x25519_dalek::PublicKey::from(&self.identity_x25519);
         let ed25519_pub = self.signing_key.verifying_key();
-        (B64.encode(x25519_pub.as_bytes()), B64.encode(ed25519_pub.as_bytes()))
+        (
+            B64.encode(x25519_pub.as_bytes()),
+            B64.encode(ed25519_pub.as_bytes()),
+        )
     }
 
     /// Sign `message` with the Ed25519 identity key.
@@ -352,7 +362,10 @@ impl Account {
         let ek_secret = derive_ephemeral(&self.seed, &their_ik_bytes, &their_otk_bytes);
         let ek_pub = x25519_dalek::PublicKey::from(&ek_secret);
 
-        let dh1 = self.identity_x25519.diffie_hellman(&their_ik_pub).to_bytes();
+        let dh1 = self
+            .identity_x25519
+            .diffie_hellman(&their_ik_pub)
+            .to_bytes();
         let dh2 = ek_secret.diffie_hellman(&their_ik_pub).to_bytes();
         let dh3 = ek_secret.diffie_hellman(&their_otk_pub).to_bytes();
 
@@ -380,20 +393,29 @@ impl Account {
         &self,
         envelope: &PreKeyEnvelope,
     ) -> Result<(PairwiseSession, Vec<u8>), CryptoError> {
-        let their_ik_pub = x25519_dalek::PublicKey::from(envelope.ik);
-        let their_ek_pub = x25519_dalek::PublicKey::from(envelope.ek);
+        let their_identity_key = x25519_dalek::PublicKey::from(envelope.ik);
+        let their_ephemeral_key = x25519_dalek::PublicKey::from(envelope.ek);
 
         // Derive the OTK private key from counter (if one was used).
         let otk_secret = envelope.otk_counter.map(|c| derive_otk(&self.seed, c));
 
-        let dh1 = self.identity_x25519.diffie_hellman(&their_ik_pub).to_bytes();
-        let dh2 = self.identity_x25519.diffie_hellman(&their_ek_pub).to_bytes();
-        let dh3 = otk_secret
-            .as_ref()
-            .map(|s| s.diffie_hellman(&their_ek_pub).to_bytes())
-            .unwrap_or([0u8; 32]);
+        let dh1 = self
+            .identity_x25519
+            .diffie_hellman(&their_identity_key)
+            .to_bytes();
+        let dh2 = self
+            .identity_x25519
+            .diffie_hellman(&their_ephemeral_key)
+            .to_bytes();
+        let dh3 = otk_secret.as_ref().map_or([0u8; 32], |s| {
+            s.diffie_hellman(&their_ephemeral_key).to_bytes()
+        });
 
-        let dh3_input: &[u8; 32] = if envelope.otk_counter.is_some() { &dh3 } else { &[0u8; 32] };
+        let dh3_input: &[u8; 32] = if envelope.otk_counter.is_some() {
+            &dh3
+        } else {
+            &[0u8; 32]
+        };
         let shared = three_dh_kdf(&dh1, &dh2, dh3_input);
 
         // Bob's ratchet key IS his identity X25519 key.
@@ -403,12 +425,20 @@ impl Account {
         let header = bytes_to_header(&envelope.hdr)?;
         let plaintext = ratchet.decrypt(&header, &envelope.ct, b"")?;
 
-        Ok((PairwiseSession { ratchet, prekey_state: None }, plaintext))
+        Ok((
+            PairwiseSession {
+                ratchet,
+                prekey_state: None,
+            },
+            plaintext,
+        ))
     }
 
     /// Decode a PreKey envelope from a base64 body string.
     pub fn decode_prekey_envelope(body: &str) -> Result<PreKeyEnvelope, CryptoError> {
-        let bytes = B64.decode(body).map_err(|e| CryptoError::Decoding(e.to_string()))?;
+        let bytes = B64
+            .decode(body)
+            .map_err(|e| CryptoError::Decoding(e.to_string()))?;
         rmp_serde::from_slice(&bytes).map_err(|e| CryptoError::Decoding(e.to_string()))
     }
 
@@ -426,21 +456,35 @@ impl Account {
     pub fn from_snapshot(s: &str) -> Result<Self, CryptoError> {
         let snap: AccountSnapshot =
             serde_json::from_str(s).map_err(|e| CryptoError::Decoding(e.to_string()))?;
-        Ok(Self::from_seed_with_state(snap.seed, snap.otk_counter, snap.unpublished))
+        Ok(Self::from_seed_with_state(
+            snap.seed,
+            snap.otk_counter,
+            snap.unpublished,
+        ))
     }
 
     fn from_seed_with_state(seed: [u8; 32], otk_counter: u64, unpublished: Vec<u64>) -> Self {
         let signing_key = SigningKey::from_bytes(&seed);
         let identity_x25519 = derive_identity_x25519(&seed);
-        Self { seed, signing_key, identity_x25519, otk_counter, unpublished }
+        Self {
+            seed,
+            signing_key,
+            identity_x25519,
+            otk_counter,
+            unpublished,
+        }
     }
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
 fn b64_to_32(s: &str, field: &str) -> Result<[u8; 32], CryptoError> {
-    let bytes = B64.decode(s).map_err(|e| CryptoError::InvalidKey(format!("{field}: base64: {e}")))?;
-    bytes.try_into().map_err(|_| CryptoError::InvalidKey(format!("{field}: expected 32 bytes")))
+    let bytes = B64
+        .decode(s)
+        .map_err(|e| CryptoError::InvalidKey(format!("{field}: base64: {e}")))?;
+    bytes
+        .try_into()
+        .map_err(|_| CryptoError::InvalidKey(format!("{field}: expected 32 bytes")))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -448,6 +492,7 @@ fn b64_to_32(s: &str, field: &str) -> Result<[u8; 32], CryptoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Verifier;
 
     fn make_account(seed_byte: u8) -> Account {
         Account::from_seed([seed_byte; 32])
@@ -473,7 +518,6 @@ mod tests {
         let msg = b"sovereign message";
         let sig = account.sign(msg);
         // Verify using the public key directly.
-        use ed25519_dalek::Verifier;
         let vk = account.signing_key.verifying_key();
         let sig_obj = ed25519_dalek::Signature::from_bytes(&sig.0);
         assert!(vk.verify(msg, &sig_obj).is_ok());
@@ -559,7 +603,10 @@ mod tests {
 
         // Alice's next message should now be Normal.
         let (alice_type2, _) = alice_session.encrypt(b"msg2").unwrap();
-        assert_eq!(alice_type2, 1, "Alice should emit Normal after confirmation");
+        assert_eq!(
+            alice_type2, 1,
+            "Alice should emit Normal after confirmation"
+        );
     }
 
     #[test]
