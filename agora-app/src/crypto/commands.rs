@@ -19,6 +19,7 @@ fn crypto_data_dir() -> Result<std::path::PathBuf, String> {
     Ok(dir)
 }
 
+/// Initialize the crypto machine for a user and device.
 #[tauri::command]
 pub fn init_crypto(
     state: State<CryptoState>,
@@ -32,6 +33,7 @@ pub fn init_crypto(
     Ok(device_keys)
 }
 
+/// Generate one-time keys for the current device.
 #[tauri::command]
 pub fn generate_otks(
     state: State<CryptoState>,
@@ -77,6 +79,7 @@ pub fn decrypt_event(
     machine.decrypt_group(&room_id, &sender_key, &session_id, &ciphertext)
 }
 
+/// Get the room key content for a given room.
 #[tauri::command]
 pub fn get_room_key_content(
     state: State<CryptoState>,
@@ -89,6 +92,7 @@ pub fn get_room_key_content(
         .map(|k| serde_json::to_value(k).unwrap()))
 }
 
+/// Get devices that need room keys for a given room.
 #[tauri::command]
 pub fn devices_needing_keys(
     state: State<CryptoState>,
@@ -100,6 +104,7 @@ pub fn devices_needing_keys(
     Ok(machine.devices_needing_session(&room_id, &all_devices))
 }
 
+/// Create an outbound Olm session from a one-time key.
 #[tauri::command]
 pub fn create_olm_session_from_otk(
     state: State<CryptoState>,
@@ -112,6 +117,7 @@ pub fn create_olm_session_from_otk(
     machine.create_outbound_olm_from_otk(&their_curve_key, &one_time_key, otk_counter)
 }
 
+/// Encrypt an Olm message for a recipient device.
 #[tauri::command]
 pub fn encrypt_olm_event(
     state: State<CryptoState>,
@@ -124,6 +130,7 @@ pub fn encrypt_olm_event(
     machine.encrypt_olm(&recipient_curve_key, &recipient_ed_key, &plaintext)
 }
 
+/// Mark that room keys have been shared with a device.
 #[tauri::command]
 pub fn mark_keys_shared(
     state: State<CryptoState>,
@@ -139,6 +146,7 @@ pub fn mark_keys_shared(
     Ok(())
 }
 
+/// Process incoming to-device events from sync.
 #[tauri::command]
 pub fn process_sync_crypto(
     state: State<CryptoState>,
@@ -149,6 +157,7 @@ pub fn process_sync_crypto(
     Ok(machine.process_to_device_events(&to_device_events))
 }
 
+/// Get the identity keys (curve and ed25519) for this device.
 #[tauri::command]
 pub fn get_identity_keys(state: State<CryptoState>) -> Result<(String, String), String> {
     let guard = state.0.lock().unwrap();

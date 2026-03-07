@@ -101,5 +101,6 @@ pub struct RoomState {
 /// To-device message payload
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ToDevicePayload {
+    /// List of to-device events.
     pub events: Vec<super::ToDeviceEvent>,
 }
