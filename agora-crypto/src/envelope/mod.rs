@@ -44,9 +44,13 @@ pub struct RecipientEntry {
 /// One authenticated ciphertext chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedChunk {
+    /// Sequence number of this chunk (0-indexed).
     pub sequence: u32,
+    /// Whether this is the final chunk.
     pub is_final: bool,
+    /// Encrypted chunk payload.
     pub ciphertext: Vec<u8>,
+    /// Nonce used for ChaCha20-Poly1305 encryption.
     pub nonce: [u8; 12],
 }
 

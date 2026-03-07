@@ -1,3 +1,4 @@
+use agora_crypto::AgentId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +97,16 @@ pub enum AmpMessage {
         claimed_by: String,
         amount: u64,
         signature: Vec<u8>,
+    },
+
+    /// DHT peer announcement for WAN discovery
+    PeerAnnounce {
+        /// The agent ID announcing itself
+        agent_id: AgentId,
+        /// Available addresses for this peer
+        addresses: Vec<String>,
+        /// Time-to-live in seconds for this announcement
+        ttl: u64,
     },
 
     // ── Phase 7: Dispute Game ─────────────────────────────────────────────────

@@ -637,7 +637,7 @@ agora-server  — optional Matrix compat bridge, not in critical path
 
 **Phase 6 — DHT Fallback (non-Yggdrasil nodes)**
 - [ ] `agora-p2p/src/discovery/dht.rs` — Kademlia, Agora homeservers as bootstrap
-- [ ] `AmpMessage::PeerAnnounce { agent_id, addresses, ttl }`
+- [x] `AmpMessage::PeerAnnounce { agent_id, addresses, ttl }`
 - [ ] `P2pConfig::wan_discovery: WanDiscoveryMode`
 
 **Phase 7 — Dispute Game (RFC-005)**

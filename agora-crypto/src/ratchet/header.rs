@@ -21,6 +21,7 @@ pub struct MessageHeader {
 }
 
 impl MessageHeader {
+    /// Create a new message header.
     pub fn new(dh_public: [u8; 32], prev_chain_length: u32, message_number: u32) -> Self {
         Self {
             dh_public,

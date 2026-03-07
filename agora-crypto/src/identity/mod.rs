@@ -151,6 +151,7 @@ pub enum TrustState {
 pub enum SigchainBody {
     /// First link — establishes the agent's identity and initial capabilities.
     Genesis {
+        /// The AgentId being established.
         agent_id: AgentId,
         /// Capabilities granted at creation. Format: "namespace:Name:version".
         /// Default empty — backward-compatible with Phase 1 Genesis links.
@@ -169,12 +170,16 @@ pub enum SigchainBody {
     },
     /// Associate a named device with an Ed25519 verifying key.
     AddDevice {
+        /// Unique identifier for the device.
         device_id: String,
         /// `VerifyingKey::to_bytes()` (32 bytes).
         device_key: Vec<u8>,
     },
     /// Remove a previously added device.
-    RevokeDevice { device_id: String },
+    RevokeDevice {
+        /// Unique identifier for the device to revoke.
+        device_id: String
+    },
     /// Rotate to a new Ed25519 verifying key.
     RotateKey {
         /// `VerifyingKey::to_bytes()` (32 bytes).
@@ -216,7 +221,9 @@ pub enum SigchainBody {
 
     /// Records a trust level transition for this agent.
     TrustTransition {
+        /// The trust state before this transition.
         from_state: TrustState,
+        /// The trust state after this transition.
         to_state: TrustState,
         /// Human-readable reason. **Maximum 256 bytes**.
         reason: String,
@@ -240,6 +247,19 @@ pub enum SigchainBody {
         /// S-02 sequence timestamp (chain length before append).
         timestamp: u64,
     },
+    /// Proves this agent refused to engage with a dispute.
+    ///
+    /// Appended when a party refuses to participate in a dispute resolution.
+    /// The link is signed and hash-linked, creating a permanent record
+    /// of non-participation that verifiers may weigh.
+    DisputeRefusal {
+        /// The dispute_id they are refusing to engage with.
+        dispute_id: [u8; 32],
+        /// Reason for refusal. **Maximum 256 bytes**.
+        reason: String,
+        /// S-02 sequence timestamp (chain length before append).
+        timestamp: u64,
+    },
 }
 
 impl SigchainBody {
@@ -254,6 +274,7 @@ impl SigchainBody {
             SigchainBody::Checkpoint { .. } => "Checkpoint",
             SigchainBody::TrustTransition { .. } => "TrustTransition",
             SigchainBody::Refusal { .. } => "Refusal",
+            SigchainBody::DisputeRefusal { .. } => "DisputeRefusal",
         }
     }
 
@@ -274,7 +295,68 @@ impl SigchainBody {
                 cosigner_key: cosigner_key.clone(),
                 cosigner_signature: None,
             },
+            SigchainBody::DisputeRefusal {
+                dispute_id,
+                reason,
+                timestamp,
+            } => SigchainBody::DisputeRefusal {
+                dispute_id: *dispute_id,
+                reason: reason.clone(),
+                timestamp: *timestamp,
+            },
             other => other.clone(),
+        }
+    }
+}
+
+// ── AnchorPayload ───────────────────────────────────────────────────────────────
+
+/// On-chain anchor payload for checkpoint verification.
+///
+/// This structure is submitted to an external chain (e.g., Solana) to make
+/// the checkpoint's merkle_root unforgeable to third parties.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnchorPayload {
+    /// AgentId committing to this checkpoint.
+    pub agent_id: [u8; 32],
+    /// The Merkle root from the Checkpoint link.
+    pub merkle_root: [u8; 32],
+    /// Seqno of the Checkpoint link.
+    pub checkpoint_seqno: u64,
+    /// Number of Action links covered by this checkpoint.
+    pub action_count: u64,
+    /// Block height when anchor was submitted.
+    pub submitted_at: u64,
+    /// Transaction hash on the external chain.
+    pub tx_hash: [u8; 32],
+}
+
+impl SigchainBody {
+    /// Convert a Checkpoint variant to an on-chain anchor payload.
+    ///
+    /// Returns an error if `self` is not a Checkpoint variant.
+    pub fn as_on_chain_anchor(
+        &self,
+        agent_id: &AgentId,
+        tx_hash: [u8; 32],
+        submitted_at: u64,
+    ) -> Result<AnchorPayload, CryptoError> {
+        match self {
+            SigchainBody::Checkpoint {
+                covers_through_seqno,
+                merkle_root,
+                action_count,
+            } => Ok(AnchorPayload {
+                agent_id: agent_id.0,
+                merkle_root: *merkle_root,
+                checkpoint_seqno: *covers_through_seqno,
+                action_count: *action_count,
+                submitted_at,
+                tx_hash,
+            }),
+            _ => Err(CryptoError::Encoding(
+                "only Checkpoint bodies can be converted to AnchorPayload".into(),
+            )),
         }
     }
 }
@@ -322,6 +404,19 @@ impl SigchainLink {
             rmp_serde::to_vec_named(self).map_err(|e| CryptoError::Encoding(e.to_string()))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
+}
+
+// ── SignedEntry ───────────────────────────────────────────────────────────────
+
+/// A signed sigchain entry with its canonical hash.
+///
+/// Used for dispute evidence export and verification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedEntry {
+    /// The authenticated sigchain link.
+    pub link: SigchainLink,
+    /// The BLAKE3 hash of the link's canonical encoding.
+    pub canonical_hash: [u8; 32],
 }
 
 // ── Sigchain ─────────────────────────────────────────────────────────────────
@@ -513,6 +608,13 @@ impl Sigchain {
                         )));
                     }
                 }
+                SigchainBody::DisputeRefusal { reason, .. } => {
+                    if reason.len() > 256 {
+                        return Err(CryptoError::SigchainVerification(format!(
+                            "link {idx}: DisputeRefusal reason exceeds 256 bytes"
+                        )));
+                    }
+                }
                 _ => {}
             }
 
@@ -640,6 +742,189 @@ impl Sigchain {
     /// Return `true` if the chain has no links.
     pub fn is_empty(&self) -> bool {
         self.links.is_empty()
+    }
+
+    /// Export hash-linked entries between two Checkpoint seqnos (inclusive).
+    ///
+    /// The exported entries form a continuous hash-linked chain suitable for
+    /// dispute evidence. Each entry includes its canonical hash for verification.
+    ///
+    /// If Checkpoints don't exist at the exact seqno positions specified, this
+    /// method finds the nearest Checkpoint at or before `from_seqno` and the
+    /// nearest Checkpoint at or after `to_seqno`, then exports from those
+    /// boundary Checkpoints. This ensures the exported chain is verifiable.
+    ///
+    /// # Parameters
+    /// - `from_seqno`: Desired starting seqno; will use nearest Checkpoint at or before this value
+    /// - `to_seqno`: Desired ending seqno; will use nearest Checkpoint at or after this value
+    ///
+    /// # Returns
+    /// Vector of `SignedEntry` from both Checkpoints and all intervening links.
+    pub fn export_range(
+        &self,
+        from_seqno: u64,
+        to_seqno: u64,
+    ) -> Result<Vec<SignedEntry>, CryptoError> {
+        if from_seqno > to_seqno {
+            return Err(CryptoError::SigchainVerification(
+                "from_seqno must be <= to_seqno".into(),
+            ));
+        }
+
+        let from_boundary = self.find_checkpoint_at_or_before(from_seqno);
+        let to_boundary = self.find_checkpoint_at_or_after(to_seqno);
+
+        let (Some(start_seqno), Some(end_seqno)) = (from_boundary, to_boundary) else {
+            return Err(CryptoError::SigchainVerification(
+                "no checkpoints found in specified range".into(),
+            ));
+        };
+
+        let entries: Vec<SignedEntry> = self
+            .links
+            .iter()
+            .filter(|link| link.seqno >= start_seqno && link.seqno <= end_seqno)
+            .map(|link| {
+                let hash = link.canonical_hash()?;
+                Ok(SignedEntry {
+                    link: link.clone(),
+                    canonical_hash: hash,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if entries.is_empty() {
+            return Err(CryptoError::SigchainVerification(
+                "no links found in specified range".into(),
+            ));
+        }
+
+        Ok(entries)
+    }
+
+    /// Find the nearest Checkpoint at or before the given seqno.
+    ///
+    /// Returns the seqno of the Checkpoint whose `covers_through_seqno` is the
+    /// largest value that is <= the given seqno.
+    fn find_checkpoint_at_or_before(&self, seqno: u64) -> Option<u64> {
+        let mut best: Option<(u64, u64)> = None;
+
+        for link in &self.links {
+            if let SigchainBody::Checkpoint { covers_through_seqno, .. } = &link.body {
+                if *covers_through_seqno <= seqno {
+                    match best {
+                        None => best = Some((link.seqno, *covers_through_seqno)),
+                        Some((_, best_covers)) if *covers_through_seqno > best_covers => {
+                            best = Some((link.seqno, *covers_through_seqno));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        best.map(|(link_seqno, _)| link_seqno)
+    }
+
+    /// Find the nearest Checkpoint at or after the given seqno.
+    ///
+    /// Returns the seqno of the Checkpoint whose `covers_through_seqno` is the
+    /// smallest value that is >= the given seqno.
+    fn find_checkpoint_at_or_after(&self, seqno: u64) -> Option<u64> {
+        let mut best: Option<(u64, u64)> = None;
+
+        for link in &self.links {
+            if let SigchainBody::Checkpoint { covers_through_seqno, .. } = &link.body {
+                if *covers_through_seqno >= seqno {
+                    match best {
+                        None => best = Some((link.seqno, *covers_through_seqno)),
+                        Some((_, best_covers)) if *covers_through_seqno < best_covers => {
+                            best = Some((link.seqno, *covers_through_seqno));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        best.map(|(link_seqno, _)| link_seqno)
+    }
+
+    /// Verify a received segment against an expected Checkpoint merkle root.
+    ///
+    /// This allows any node to verify dispute evidence without trusting the sender.
+    /// Checks:
+    /// 1. Hash-link continuity: entry[i].prev_hash == entry[i-1].canonical_hash
+    /// 2. Signature validity: each entry's signature verifies against its signer
+    /// 3. Merkle root: the Checkpoint's merkle_root matches the computed root
+    ///
+    /// # Parameters
+    /// - `entries`: The signed entries to verify
+    /// - `expected_merkle_root`: The merkle_root from the Checkpoint link
+    ///
+    /// # Returns
+    /// `Ok(())` if verification succeeds, error otherwise.
+    pub fn verify_segment(
+        entries: &[SignedEntry],
+        expected_merkle_root: [u8; 32],
+    ) -> Result<(), CryptoError> {
+        if entries.is_empty() {
+            return Err(CryptoError::SigchainVerification(
+                "segment is empty".into(),
+            ));
+        }
+
+        let mut action_hashes: Vec<[u8; 32]> = Vec::new();
+        let mut prev_hash: Option<[u8; 32]> = None;
+
+        for (idx, entry) in entries.iter().enumerate() {
+            if let Some(expected_prev) = prev_hash {
+                if entry.canonical_hash != expected_prev {
+                    return Err(CryptoError::SigchainVerification(format!(
+                        "entry {}: hash-link continuity broken",
+                        idx
+                    )));
+                }
+            }
+
+            let vk = VerifyingKey::from_bytes(&entry.link.signer).map_err(|e| {
+                CryptoError::SigchainVerification(format!("entry {}: bad signer key: {e}", idx))
+            })?;
+
+            let to_sign = SigchainLink::signed_bytes(
+                entry.link.seqno,
+                &entry.link.prev_hash,
+                &entry.link.body,
+            )?;
+
+            let sig_bytes: [u8; 64] = entry.link.signature.as_slice().try_into().map_err(
+                |_| CryptoError::SigchainVerification(format!("entry {}: signature must be 64 bytes", idx)),
+            )?;
+            let signature = Signature::from_bytes(&sig_bytes);
+
+            vk.verify(&to_sign, &signature).map_err(|e| {
+                CryptoError::SigchainVerification(format!(
+                    "entry {}: invalid signature: {e}",
+                    idx
+                ))
+            })?;
+
+            if let SigchainBody::Action { event_id_hash, .. } = &entry.link.body {
+                action_hashes.push(*event_id_hash);
+            }
+
+            prev_hash = Some(entry.canonical_hash);
+        }
+
+        let computed_merkle_root = Sigchain::compute_checkpoint_merkle_root(&action_hashes);
+        if computed_merkle_root != expected_merkle_root {
+            return Err(CryptoError::SigchainVerification(format!(
+                "merkle root mismatch: expected {:02x?}, computed {:02x?}",
+                expected_merkle_root, computed_merkle_root
+            )));
+        }
+
+        Ok(())
     }
 }
 
