@@ -36,11 +36,16 @@ pub enum MeshEvent {
 
 impl P2pNode {
     pub async fn new(config: P2pConfig) -> Result<Self, Error> {
-        let (cert, key) = generate_self_signed_cert(&config.agent_id)?;
+        // Resolve agent_id from identity_source (file or daemon)
+        let agent_id = config.identity_source.resolve_agent_id()
+            .await
+            .map_err(|e| Error::Config(e))?;
+        
+        let (cert, key) = generate_self_signed_cert(&agent_id)?;
         
         let quic_config = QuicConfig::new(cert, key);
         
-        let transport = QuicTransport::new(quic_config, config.agent_id.clone()).await?;
+        let transport = QuicTransport::new(quic_config, agent_id.clone()).await?;
         let transport = Arc::new(transport);
         
         let (mesh_events_tx, mesh_events_rx) = mpsc::channel(100);
@@ -48,10 +53,19 @@ impl P2pNode {
         let (mesh_internal_tx, mesh_internal_rx) = mpsc::channel(100);
         
         let mesh = Arc::new(MeshManager::new(
-            config.agent_id.clone(),
+            agent_id.clone(),
             transport.clone(),
             mesh_internal_tx,
         ));
+        
+        // Update config with resolved agent_id
+        let config = P2pConfig {
+            identity_source: config.identity_source,
+            agent_id: agent_id.clone(),
+            listen_port: config.listen_port,
+            service_name: config.service_name,
+            transport: config.transport,
+        };
         
         Ok(Self {
             config,

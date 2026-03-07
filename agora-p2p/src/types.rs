@@ -2,8 +2,70 @@
 
 use std::sync::Arc;
 
+use std::path::PathBuf;
+
 use agora_crypto::AgentId;
 use serde::{Deserialize, Serialize};
+
+/// Source of identity keys
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum IdentitySource {
+    /// Read identity from a file (Phases 1–4)
+    File(PathBuf),
+    /// Delegate to sovereignd daemon socket (Phase 5)
+    Daemon(PathBuf),
+}
+
+impl Default for IdentitySource {
+    fn default() -> Self {
+        let default_path = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("agora")
+            .join("identity.key");
+        IdentitySource::File(default_path)
+    }
+}
+
+impl IdentitySource {
+    /// Check if the identity source is available.
+    /// For File source, checks if the file exists.
+    /// For Daemon source, checks if the socket is reachable.
+    /// Returns true if identity can be resolved.
+    pub async fn is_available(&self) -> bool {
+        match self {
+            IdentitySource::File(path) => tokio::fs::metadata(path).await.is_ok(),
+            IdentitySource::Daemon(socket_path) => {
+                tokio::net::UnixStream::connect(socket_path)
+                    .await
+                    .is_ok()
+            }
+        }
+    }
+
+    /// Get the resolved AgentId from this source.
+    /// For File source, reads and derives the key.
+    /// For Daemon source, queries the daemon.
+    pub async fn resolve_agent_id(&self) -> Result<AgentId, String> {
+        match self {
+            IdentitySource::File(path) => {
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .map_err(|e| format!("failed to read identity file: {}", e))?;
+                if bytes.len() != 32 {
+                    return Err("identity file must be 32 bytes".to_string());
+                }
+                let mut key_bytes = [0u8; 32];
+                key_bytes.copy_from_slice(&bytes);
+                Ok(AgentId::from_bytes(&key_bytes)
+                    .map_err(|e| format!("invalid identity key: {}", e))?)
+            }
+            IdentitySource::Daemon(socket_path) => {
+                let _ = socket_path;
+                Err("sovereignd daemon identity resolution not implemented yet".to_string())
+            }
+        }
+    }
+}
 
 use crate::transport::quic::QuicConfig as QuicConfigInner;
 
@@ -15,9 +77,11 @@ pub struct Peer {
 }
 
 /// Local peer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2pConfig {
-    /// Agent identity for this peer
+    /// Identity source for this peer
+    pub identity_source: IdentitySource,
+    /// AgentId (resolved from identity_source)
     pub agent_id: AgentId,
     /// Port to listen on for QUIC
     pub listen_port: u16,
@@ -30,10 +94,8 @@ pub struct P2pConfig {
 impl Default for P2pConfig {
     fn default() -> Self {
         Self {
-            agent_id: AgentId::from_hex(
-                "0000000000000000000000000000000000000000000000000000000000000000",
-            )
-            .unwrap(),
+            identity_source: IdentitySource::default(),
+            agent_id: AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
             listen_port: 0,
             service_name: "_agora._udp.local.".to_string(),
             transport: TransportMode::Auto,

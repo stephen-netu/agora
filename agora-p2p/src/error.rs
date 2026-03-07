@@ -22,6 +22,9 @@ pub enum Error {
     #[error("broadcast error: {0}")]
     Broadcast(String),
 
+    #[error("config error: {0}")]
+    Config(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
