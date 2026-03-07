@@ -1,6 +1,7 @@
 //! Main P2P Node that ties everything together
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
@@ -21,6 +22,8 @@ pub struct P2pNode {
     mesh_events_tx: mpsc::Sender<MeshEvent>,
     mesh_events_rx: Option<mpsc::Receiver<MeshEvent>>,
     mesh_internal_rx: Option<mpsc::Receiver<crate::mesh::peer::MeshEvent>>,
+    /// Sequence counter for deterministic event timestamps (S-02 compliant)
+    sequence_counter: AtomicU64,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,7 @@ impl P2pNode {
             mesh_events_tx,
             mesh_events_rx: Some(mesh_events_rx),
             mesh_internal_rx: Some(mesh_internal_rx),
+            sequence_counter: AtomicU64::new(0),
         })
     }
     
@@ -173,12 +177,10 @@ impl P2pNode {
     }
     
     pub async fn broadcast_room_message(&self, room_id: &str, message: &[u8]) -> Result<(), Error> {
-        let timestamp_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or_else(|e| e.duration().as_millis() as u64);
+        // S-02 compliant: use deterministic sequence number instead of wall-clock time
+        let sequence = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
         
-        let event_id = format!("{}-{}", room_id, timestamp_ms);
+        let event_id = format!("{}-{}", room_id, sequence);
         
         let msg = AmpMessage::EventPush {
             room_id: room_id.to_string(),
@@ -186,7 +188,7 @@ impl P2pNode {
                 event_id,
                 event_type: "m.room.message".to_string(),
                 content: message.to_vec(),
-                origin_server_ts: timestamp_ms,
+                origin_server_ts: sequence,
             }],
         };
         

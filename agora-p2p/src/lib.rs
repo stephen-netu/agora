@@ -3,14 +3,19 @@
 //! This crate provides peer-to-peer networking capabilities for Agora,
 //! enabling direct communication between peers on local networks.
 
-pub mod error;
+mod error;
+mod identity;
 pub mod types;
 pub mod transport;
-pub mod protocol;
-pub mod discovery;
-pub mod mesh;
-pub mod node;
+mod protocol;
+mod discovery;
+mod mesh;
+mod node;
 
-pub use error::Error;
-pub use types::*;
+// Re-export only the public API
+pub use agora_crypto::AgentId;
 pub use node::{P2pNode, MeshEvent};
+pub use types::{P2pConfig, TransportMode, YggdrasilConfig};
+pub use transport::quic::QuicConfig;
+pub use protocol::AmpMessage;
+pub use error::Error;

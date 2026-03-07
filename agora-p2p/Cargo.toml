@@ -13,6 +13,8 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 ciborium = { workspace = true }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
 
 # QUIC transport - force aws-lc-rs
 quinn = { workspace = true, default-features = false, features = ["aws-lc-rs", "runtime-tokio"] }
@@ -38,7 +40,12 @@ x509-parser = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+ed25519-dalek = { workspace = true }
+sha2 = { workspace = true }
 
 [[example]]
 name = "p2p_chat"
 path = "examples/p2p_chat.rs"
+
+[features]
+yggdrasil-integration-tests = []

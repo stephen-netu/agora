@@ -19,6 +19,9 @@ pub enum Error {
     #[error("mesh error: {0}")]
     Mesh(String),
 
+    #[error("broadcast error: {0}")]
+    Broadcast(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

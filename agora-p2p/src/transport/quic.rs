@@ -10,8 +10,7 @@ use rustls::{ServerConfig as TlsServerConfig, ClientConfig as TlsClientConfig};
 use rcgen::{generate_simple_self_signed, CertifiedKey};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
-use tracing::{info, error, debug};
-use x509_parser::prelude::X509Certificate;
+use tracing::{info, debug};
 
 use crate::error::Error;
 use crate::transport::tls::{FingerprintStore, FingerprintServerVerifier};
@@ -45,7 +44,6 @@ pub struct QuicConnection {
 pub struct QuicTransport {
     endpoint: Endpoint,
     config: QuicConfig,
-    agent_id: AgentId,
     fingerprint_store: FingerprintStore,
     connections: Arc<RwLock<HashMap<AgentId, QuicConnection>>>,
     incoming_sender: mpsc::Sender<mpsc::Sender<Incoming>>,
@@ -122,7 +120,7 @@ fn make_quinn_client_config(
 }
 
 impl QuicTransport {
-    pub async fn new(config: QuicConfig, agent_id: AgentId) -> Result<Self, Error> {
+    pub async fn new(config: QuicConfig, _agent_id: AgentId) -> Result<Self, Error> {
         let server_config = make_quinn_server_config(config.tls_cert.clone(), config.tls_key.clone_key(), config.max_idle_timeout, config.keepalive_interval)?;
         
         let endpoint = Endpoint::server(server_config, "0.0.0.0:0".parse().map_err(|e: std::net::AddrParseError| Error::Transport(e.to_string()))?)?;
@@ -150,12 +148,11 @@ impl QuicTransport {
             }
         });
         
-        info!("QUIC transport initialized for agent: {}", agent_id);
+        info!("QUIC transport initialized");
         
         Ok(Self {
             endpoint,
             config,
-            agent_id,
             fingerprint_store: FingerprintStore::new(),
             connections: Arc::new(RwLock::new(HashMap::new())),
             incoming_sender: tx,
@@ -207,6 +204,7 @@ impl QuicTransport {
     }
     
     pub async fn connected_peers(&self) -> Vec<AgentId> {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer enumeration
         self.connections.read().await.keys().cloned().collect()
     }
     
@@ -265,6 +263,7 @@ impl QuicTransport {
     }
     
     pub async fn open_stream(&self, peer: &AgentId) -> Result<SendStream, Error> {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for stream management
         let connections = self.connections.read().await;
         let connection = connections.get(peer)
             .ok_or_else(|| Error::Transport("peer not connected".to_string()))?;
@@ -278,10 +277,12 @@ impl QuicTransport {
     }
     
     pub async fn get_connection(&self, peer: &AgentId) -> Option<QuicConnection> {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for connection lookup
         self.connections.read().await.get(peer).cloned()
     }
     
     pub async fn close(&self) {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for transport shutdown
         info!("Closing QUIC transport");
         
         let mut connections = self.connections.write().await;
@@ -300,6 +301,7 @@ impl QuicTransport {
     }
     
     pub async fn remove_connection(&self, peer: &AgentId) {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer disconnection
         if let Some(conn) = self.connections.write().await.remove(peer) {
             debug!("Removing connection to peer: {}", peer);
             conn.connection.close(0u8.into(), b"connection removed".as_ref());
@@ -307,15 +309,18 @@ impl QuicTransport {
     }
     
     pub async fn add_peer(&self, agent_id: &AgentId, fingerprint: [u8; 32]) {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for fingerprint management
         self.fingerprint_store.add_peer(agent_id, fingerprint).await;
         info!("Added peer {} to fingerprint store", agent_id);
     }
     
     pub fn fingerprint_store(&self) -> &FingerprintStore {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for fingerprint access
         &self.fingerprint_store
     }
     
     pub async fn get_connected_peers(&self) -> Vec<AgentId> {
+        // IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer enumeration
         self.connections.read().await.keys().cloned().collect()
     }
 }

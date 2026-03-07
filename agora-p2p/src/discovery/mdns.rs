@@ -15,7 +15,6 @@ pub struct MdnsDiscovery {
     peers: Arc<RwLock<HashMap<String, Peer>>>,
     peer_events: mpsc::Sender<MdnsPeerEvent>,
     service_type: String,
-    instance_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +61,6 @@ impl MdnsDiscovery {
                 peers: Arc::new(RwLock::new(HashMap::new())),
                 peer_events: tx,
                 service_type: service_type.to_string(),
-                instance_name,
             },
             rx,
         ))
@@ -188,10 +186,12 @@ impl MdnsDiscovery {
         Ok(())
     }
     
+    /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX
     pub async fn get_peers(&self) -> Vec<Peer> {
         self.peers.read().await.values().cloned().collect()
     }
     
+    /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX
     pub async fn get_peer(&self, agent_id: &str) -> Option<Peer> {
         self.peers.read().await.get(agent_id).cloned()
     }

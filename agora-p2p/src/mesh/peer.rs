@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use agora_crypto::AgentId;
-use quinn::{RecvStream, SendStream};
+use quinn::SendStream;
 use tokio::sync::{mpsc, RwLock};
 
 use crate::error::Error;
 use crate::types::Peer;
 use crate::transport::quic::{read_message, QuicConnection, QuicTransport};
-use crate::protocol::{decode, AmpMessage};
+use crate::protocol::{decode, AmpMessage, Capabilities};
+use super::replay::ReplayProtection;
 
 pub struct ConnectedPeer {
     pub peer: Peer,
@@ -30,6 +32,10 @@ pub struct MeshManager {
     connections: Arc<RwLock<BTreeMap<AgentId, ConnectedPeer>>>,
     pending: Arc<RwLock<BTreeMap<AgentId, bool>>>,
     events: mpsc::Sender<MeshEvent>,
+    /// Sequence number generator for outgoing messages
+    sequence_counter: AtomicU64,
+    /// Replay protection for incoming messages
+    replay_protection: ReplayProtection,
 }
 
 impl MeshManager {
@@ -44,11 +50,19 @@ impl MeshManager {
             connections: Arc::new(RwLock::new(BTreeMap::new())),
             pending: Arc::new(RwLock::new(BTreeMap::new())),
             events,
+            sequence_counter: AtomicU64::new(0),
+            replay_protection: ReplayProtection::new(),
         }
     }
 
+    /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer identity lookup
     pub fn local_id(&self) -> &AgentId {
         &self.local_id
+    }
+
+    /// Generate the next sequence number for outgoing messages.
+    fn next_sequence(&self) -> u64 {
+        self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
 
     pub async fn should_initiate(&self, peer_id: &AgentId) -> bool {
@@ -96,13 +110,20 @@ impl MeshManager {
         let events = self.events.clone();
         let connections = self.connections.clone();
         let local_id = self.local_id.clone();
+        let sequence = self.next_sequence();
 
         match connection.connection.open_bi().await {
-            Ok((mut send, recv)) => {
+            Ok((mut send, _recv)) => {
                 let handshake = AmpMessage::Handshake {
                     agent_id: local_id.to_string(),
                     version: 1,
-                    capabilities: Default::default(),
+                    capabilities: Capabilities {
+                        events: true,
+                        relay: true,
+                        state_sync: false,
+                        collaboration: true,
+                    },
+                    sequence,
                 };
 
                 if let Ok(bytes) = crate::protocol::encode(&handshake) {
@@ -174,6 +195,7 @@ impl MeshManager {
         
         let events = self.events.clone();
         let connections = self.connections.clone();
+        let replay_protection = self.replay_protection.clone();
 
         match connection.connection.accept_bi().await {
             Ok((mut send, mut recv)) => {
@@ -185,10 +207,10 @@ impl MeshManager {
                     }
                 };
 
-                let peer_agent_id = match decode(&handshake_bytes) {
-                    Ok(AmpMessage::Handshake { agent_id, .. }) => {
+                let (peer_agent_id, handshake_sequence) = match decode(&handshake_bytes) {
+                    Ok(AmpMessage::Handshake { agent_id, sequence, .. }) => {
                         match agora_crypto::AgentId::from_hex(&agent_id) {
-                            Ok(id) => id,
+                            Ok(id) => (id, sequence),
                             Err(e) => {
                                 tracing::warn!("Invalid agent_id in handshake: {}", e);
                                 return;
@@ -205,6 +227,15 @@ impl MeshManager {
                     }
                 };
 
+                // Validate sequence number for replay protection
+                if let Err(()) = replay_protection.validate_and_mark(&peer_agent_id, handshake_sequence).await {
+                    tracing::warn!(
+                        "Rejected connection from {}: sequence {} already used (replay attack?)",
+                        peer_agent_id, handshake_sequence
+                    );
+                    return;
+                }
+
                 if let Some(ref cert_peer_id) = cert_peer_id {
                     if &peer_agent_id != cert_peer_id {
                         tracing::warn!(
@@ -216,10 +247,17 @@ impl MeshManager {
                     tracing::debug!("Identity verified: peer_id matches certificate");
                 }
 
+                let our_sequence = self.next_sequence();
                 let our_handshake = AmpMessage::Handshake {
                     agent_id: self.local_id.to_string(),
                     version: 1,
-                    capabilities: Default::default(),
+                    capabilities: Capabilities {
+                        events: true,
+                        relay: true,
+                        state_sync: false,
+                        collaboration: true,
+                    },
+                    sequence: our_sequence,
                 };
                 if let Ok(bytes) = crate::protocol::encode(&our_handshake) {
                     if let Err(e) = crate::transport::quic::write_message(&mut send, &bytes).await {
@@ -292,6 +330,8 @@ impl MeshManager {
     pub async fn disconnect(&self, peer_id: &AgentId) {
         let was_connected = self.connections.write().await.remove(peer_id).is_some();
         if was_connected {
+            // Clean up replay protection state for this peer
+            self.replay_protection.remove_peer(peer_id).await;
             let _ = self.events.send(MeshEvent::Disconnected(peer_id.clone())).await;
         }
     }
