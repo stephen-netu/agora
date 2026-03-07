@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { api, type RoomEvent } from '$lib/api';
 	import { auth } from '$lib/stores/auth';
-	import { decryptEvent } from '$lib/crypto';
+	import { decryptEvent, getAgentDisplayName } from '$lib/crypto';
 	import MediaMessage from './MediaMessage.svelte';
 	import Reactions from './Reactions.svelte';
 	import MessageHoverMenu from './MessageHoverMenu.svelte';
@@ -29,6 +29,37 @@
 	let decryptingInProgress = $state(new Set<string>());
 	let profileCache = $state(new Map<string, { displayname?: string; avatar_url?: string }>());
 	let fetchingProfiles = $state(new Set<string>());
+	let handleCache = $state(new Map<string, string>());
+	let fetchingHandles = $state(new Set<string>());
+
+	// Extract AgentId hex from Matrix user ID (e.g., @agnt-7f3c2a8d:localhost)
+	function extractAgentIdHex(sender: string): string | null {
+		const match = sender.match(/@([^:]+):/);
+		return match ? match[1] : null;
+	}
+
+	// Fetch deterministic handles for message senders
+	$effect(() => {
+		for (const event of messages) {
+			const agentIdHex = extractAgentIdHex(event.sender);
+			if (agentIdHex && !handleCache.has(event.sender) && !fetchingHandles.has(event.sender)) {
+				fetchingHandles.add(event.sender);
+				fetchingHandles = new Set(fetchingHandles);
+				getAgentDisplayName(agentIdHex).then((handle) => {
+					if (handle) {
+						handleCache.set(event.sender, handle);
+						handleCache = new Map(handleCache);
+					}
+				}).catch(() => {
+					// Failed to get handle
+				}).finally(() => {
+					fetchingHandles.delete(event.sender);
+					fetchingHandles = new Set(fetchingHandles);
+				});
+			}
+		}
+	});
+
 
 	// Fetch profiles for message senders
 	$effect(() => {
@@ -60,6 +91,10 @@
 		const profile = profileCache.get(sender);
 		if (profile?.displayname) return profile.displayname;
 		return senderName(sender);
+	}
+
+	function getHandle(sender: string): string | null {
+		return handleCache.get(sender) ?? null;
 	}
 
 	// Trigger decryption for encrypted events
@@ -191,6 +226,9 @@
 				<div class="message-content-wrapper">
 					<div class="message-header">
 						<span class="sender">{getDisplayName(event.sender)}</span>
+						{#if getHandle(event.sender)}
+							<span class="id-handle">{getHandle(event.sender)}</span>
+						{/if}
 					{#if isPinned(event.event_id)}
 						<span class="pin-badge" title="Pinned">&#128204;</span>
 					{/if}
@@ -281,6 +319,13 @@
 		font-size: 0.75rem;
 		font-weight: 600;
 		color: var(--accent);
+	}
+
+	.id-handle {
+		font-size: 0.65rem;
+		font-weight: 400;
+		color: var(--text-muted);
+		font-family: monospace;
 	}
 
 	.pin-badge {

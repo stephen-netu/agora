@@ -45,7 +45,7 @@ pub async fn upload_keys(
         state.store.upsert_device_keys(&record).await?;
     }
 
-    if let Some(otks) = body.one_time_keys {
+    if let Some(otks) = body.one_time_key {
         let mut records = Vec::new();
         for (full_key_id, key_value) in &otks {
             let (algorithm, _key_id) = full_key_id

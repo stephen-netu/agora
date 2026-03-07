@@ -42,6 +42,7 @@ version = "0.1.0"
 dependencies = [
  "agora-core",
  "agora-crypto",
+ "base64 0.22.1",
  "blake3",
  "clap",
  "crossterm",

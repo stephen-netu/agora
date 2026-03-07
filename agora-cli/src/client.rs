@@ -2,7 +2,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agora_core::api::*;
+use agora_core::events::presence::GetPresenceResponse;
 use reqwest::Client;
+use base64::engine::general_purpose;
+use base64::Engine;
 use serde::de::DeserializeOwned;
 
 /// HTTP client for the Agora / Matrix Client-Server API.
@@ -507,7 +510,7 @@ impl AgoraClient {
         // Extract user_id from token (JWT format: header.payload.signature)
         let user_id = user_id.split('.').nth(1).ok_or(CliClientError::NotLoggedIn)?;
         let user_id = String::from_utf8(
-            base64::decode_config(user_id, base64::URL_SAFE_NO_PAD)
+            general_purpose::URL_SAFE_NO_PAD.decode(user_id)
                 .map_err(|_| CliClientError::NotLoggedIn)?
         ).map_err(|_| CliClientError::NotLoggedIn)?;
         let user_id: serde_json::Value = serde_json::from_str(&user_id)

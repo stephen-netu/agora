@@ -13,6 +13,7 @@ use crate::transport::quic::{read_message, QuicConnection, QuicTransport};
 use crate::protocol::{decode, AmpMessage, Capabilities};
 use super::replay::ReplayProtection;
 
+// IMPLEMENTATION_REQUIRED: peer and sender fields needed for peer connection handling
 pub struct ConnectedPeer {
     pub peer: Peer,
     pub sender: SendStream,
@@ -57,11 +58,6 @@ impl MeshManager {
             replay_protection: ReplayProtection::new(),
             trust_registry: Arc::new(RwLock::new(BTreeMap::new())),
         }
-    }
-
-    /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX for peer identity lookup
-    pub fn local_id(&self) -> &AgentId {
-        &self.local_id
     }
 
     /// Generate the next sequence number for outgoing messages.

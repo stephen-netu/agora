@@ -79,6 +79,10 @@ impl fmt::Debug for AgentId {
     }
 }
 
+// ── Display Names ─────────────────────────────────────────────────────────────
+
+pub mod display;
+
 // ── AgentIdentity ─────────────────────────────────────────────────────────────
 
 /// An agent's cryptographic identity: Ed25519 signing key and its derived ID.

@@ -11,6 +11,8 @@
     clippy::must_use_candidate,
 )]
 
+//! Agora CLI - Command-line interface for the Agora communications platform.
+
 mod client;
 mod sigchain;
 mod tui;

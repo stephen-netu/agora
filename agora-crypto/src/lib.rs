@@ -27,6 +27,7 @@ pub mod timestamp;
 pub use ids::{event_id, media_id, room_id};
 pub use timestamp::{SequenceTimestamp, TimestampProvider, DEFAULT_EPOCH_MS};
 pub use identity::{AgentId, AgentIdentity, AnchorPayload, SignedEntry, Sigchain, SigchainBody, SigchainLink, TrustState};
+pub use identity::display::agent_display_name;
 
 /// Errors produced by agora-crypto operations.
 #[derive(Debug, thiserror::Error)]

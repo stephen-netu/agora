@@ -186,6 +186,20 @@ export async function getAgentId(): Promise<string | null> {
 }
 
 /**
+ * Return the human-readable deterministic display name for an AgentId.
+ *
+ * Takes a 64-character hex-encoded AgentId and returns a string in the format
+ * word1-word2#NNNN (e.g., "clever-fox#5678").
+ */
+export async function getAgentDisplayName(agentIdHex: string): Promise<string | null> {
+	try {
+		return (await tauriInvoke('get_agent_display_name', { agentIdHex })) as string | null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Append an Action sigchain link for an outgoing event.
  *
  * Returns `{ seqno, agent_id }` to include as `sigchain_proof` in the event

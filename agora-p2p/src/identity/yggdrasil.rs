@@ -3,7 +3,7 @@ use std::net::Ipv6Addr;
 use ed25519_dalek::VerifyingKey;
 use sha2::{Digest, Sha512};
 
-/// IMPLEMENTATION_REQUIRED: wired in wt-010 for Yggdrasil address generation
+// IMPLEMENTATION_REQUIRED: wired in wt-010 for Yggdrasil address generation
 pub fn yggdrasil_addr_from_pubkey(verifying_key: &VerifyingKey) -> Ipv6Addr {
     let pubkey_bytes = verifying_key.as_bytes();
 

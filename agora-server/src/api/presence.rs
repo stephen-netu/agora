@@ -1,9 +1,5 @@
 use axum::extract::{Path, State, Json};
-use axum::http::StatusCode;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant};
 
 use agora_core::events::presence::*;
 
@@ -24,7 +20,7 @@ pub async fn set_presence(
         return Err(ApiError::forbidden("can only set own presence status"));
     }
 
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
 
     let mut presence_map = state.presence.write().await;
     
@@ -53,7 +49,7 @@ pub async fn get_presence(
     AuthUser(_auth_user, _): AuthUser,
     Path(user_id): Path<String>,
 ) -> Result<Json<GetPresenceResponse>, ApiError> {
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let presence_map = state.presence.read().await;
 
     if let Some(record) = presence_map.get(&user_id) {
@@ -84,7 +80,7 @@ pub async fn heartbeat(
     AuthUser(auth_user, _): AuthUser,
     Json(body): Json<Option<HeartbeatRequest>>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let user_id = auth_user.as_str().to_owned();
 
     let mut presence_map = state.presence.write().await;
@@ -127,7 +123,7 @@ pub async fn get_presence_list(
     AuthUser(_auth_user, _): AuthUser,
     Json(body): Json<Vec<String>>,
 ) -> Result<Json<HashMap<String, GetPresenceResponse>>, ApiError> {
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let presence_map = state.presence.read().await;
     
     let mut result = HashMap::new();
@@ -180,7 +176,7 @@ async fn broadcast_presence_change(state: &AppState, user_id: &str) {
         Err(_) => return,
     };
 
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let presence_map = state.presence.read().await;
     
     let Some(record) = presence_map.get(user_id) else {
@@ -201,7 +197,7 @@ pub async fn get_users_presence(
     state: &AppState,
     user_ids: &[String],
 ) -> Vec<PresenceEvent> {
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let presence_map = state.presence.read().await;
     
     let mut events = Vec::new();
@@ -226,7 +222,7 @@ pub async fn get_users_presence(
 
 /// Clean up stale presence entries (called periodically).
 pub async fn cleanup_stale_presence(state: &AppState) {
-    let now = state.timestamp.now().as_u64();
+    let now = state.timestamp.current();
     let mut presence_map = state.presence.write().await;
     
     const STALE_THRESHOLD_MS: u64 = 24 * 60 * 60 * 1000; // 24 hours

@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use serde_json::Value;
 use tauri::State;
 
-use agora_crypto::AgentId;
+use agora_crypto::{AgentId, agent_display_name};
 
 use super::machine::{CryptoMachine, DecryptedPayload, DeviceInfo, EncryptedPayload};
 
@@ -22,7 +22,7 @@ fn crypto_data_dir() -> Result<std::path::PathBuf, String> {
 /// Initialize the crypto machine for a user and device.
 #[tauri::command]
 pub fn init_crypto(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     user_id: String,
     device_id: String,
 ) -> Result<Value, String> {
@@ -36,7 +36,7 @@ pub fn init_crypto(
 /// Generate one-time keys for the current device.
 #[tauri::command]
 pub fn generate_otks(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     current_count: u64,
 ) -> Result<BTreeMap<String, Value>, String> {
     let mut guard = state.0.lock().unwrap();
@@ -46,7 +46,7 @@ pub fn generate_otks(
 
 #[tauri::command]
 pub fn needs_otk_upload(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     server_counts: BTreeMap<String, u64>,
 ) -> Result<bool, String> {
     let guard = state.0.lock().unwrap();
@@ -56,7 +56,7 @@ pub fn needs_otk_upload(
 
 #[tauri::command]
 pub fn encrypt_message(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     room_id: String,
     event_type: String,
     content: Value,
@@ -68,7 +68,7 @@ pub fn encrypt_message(
 
 #[tauri::command]
 pub fn decrypt_event(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     room_id: String,
     sender_key: String,
     session_id: String,
@@ -82,7 +82,7 @@ pub fn decrypt_event(
 /// Get the room key content for a given room.
 #[tauri::command]
 pub fn get_room_key_content(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     room_id: String,
 ) -> Result<Option<Value>, String> {
     let guard = state.0.lock().unwrap();
@@ -95,7 +95,7 @@ pub fn get_room_key_content(
 /// Get devices that need room keys for a given room.
 #[tauri::command]
 pub fn devices_needing_keys(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     room_id: String,
     all_devices: Vec<DeviceInfo>,
 ) -> Result<Vec<DeviceInfo>, String> {
@@ -107,7 +107,7 @@ pub fn devices_needing_keys(
 /// Create an outbound Olm session from a one-time key.
 #[tauri::command]
 pub fn create_olm_session_from_otk(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     their_curve_key: String,
     one_time_key: String,
     otk_counter: Option<u64>,
@@ -120,7 +120,7 @@ pub fn create_olm_session_from_otk(
 /// Encrypt an Olm message for a recipient device.
 #[tauri::command]
 pub fn encrypt_olm_event(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     recipient_curve_key: String,
     recipient_ed_key: String,
     plaintext: String,
@@ -133,7 +133,7 @@ pub fn encrypt_olm_event(
 /// Mark that room keys have been shared with a device.
 #[tauri::command]
 pub fn mark_keys_shared(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     room_id: String,
     user_id: String,
     device_id: String,
@@ -149,7 +149,7 @@ pub fn mark_keys_shared(
 /// Process incoming to-device events from sync.
 #[tauri::command]
 pub fn process_sync_crypto(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     to_device_events: Vec<Value>,
 ) -> Result<Vec<String>, String> {
     let mut guard = state.0.lock().unwrap();
@@ -159,7 +159,7 @@ pub fn process_sync_crypto(
 
 /// Get the identity keys (curve and ed25519) for this device.
 #[tauri::command]
-pub fn get_identity_keys(state: State<CryptoState>) -> Result<(String, String), String> {
+pub fn get_identity_keys(state: State<'_, CryptoState>) -> Result<(String, String), String> {
     let guard = state.0.lock().unwrap();
     let machine = guard.as_ref().ok_or("crypto not initialized")?;
     Ok(machine.identity_keys())
@@ -170,7 +170,7 @@ pub fn get_identity_keys(state: State<CryptoState>) -> Result<(String, String), 
 /// Initialise (or restore) the agent sigchain identity.
 /// Safe to call on every startup — no-op if already initialised.
 #[tauri::command]
-pub fn init_sigchain(state: State<CryptoState>) -> Result<(), String> {
+pub fn init_sigchain(state: State<'_, CryptoState>) -> Result<(), String> {
     let mut guard = state.0.lock().unwrap();
     let machine = guard.as_mut().ok_or("crypto not initialized")?;
     machine.init_sigchain()
@@ -179,11 +179,23 @@ pub fn init_sigchain(state: State<CryptoState>) -> Result<(), String> {
 /// Return the hex-encoded `AgentId` (64 hex chars) for this device's sigchain.
 /// Returns `null` JSON if the sigchain is not yet initialised.
 #[tauri::command]
-pub fn get_agent_id(state: State<CryptoState>) -> Result<Option<String>, String> {
+pub fn get_agent_id(state: State<'_, CryptoState>) -> Result<Option<String>, String> {
     let guard = state.0.lock().unwrap();
     let machine = guard.as_ref().ok_or("crypto not initialized")?;
     Ok(machine.agent_id_hex())
 }
+
+/// Return the human-readable deterministic display name for an AgentId.
+/// 
+/// Takes a 64-character hex-encoded AgentId and returns a string in the format
+/// word1-word2#NNNN (e.g., "clever-fox#5678").
+#[tauri::command]
+pub fn get_agent_display_name(agent_id_hex: String) -> Result<String, String> {
+    let agent_id = AgentId::from_hex(&agent_id_hex)
+        .map_err(|e| format!("invalid AgentId hex: {e}"))?;
+    Ok(agent_display_name(&agent_id))
+}
+
 
 /// Return whether `correlation_path` (hex AgentIds) contains this agent's id.
 ///
@@ -191,7 +203,7 @@ pub fn get_agent_id(state: State<CryptoState>) -> Result<Option<String>, String>
 /// `append_sigchain_refusal` instead and surface an error to the UI.
 #[tauri::command]
 pub fn check_sigchain_loop(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     correlation_path: Vec<String>,
 ) -> Result<bool, String> {
     let path: Result<Vec<AgentId>, String> = correlation_path
@@ -211,7 +223,7 @@ pub fn check_sigchain_loop(
 /// optional publication to the server.
 #[tauri::command]
 pub fn append_sigchain_refusal(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     refused_event_type: String,
     correlation_path: Vec<String>,
 ) -> Result<Value, String> {
@@ -249,7 +261,7 @@ pub struct SigchainActionProof {
 /// outgoing event content so verifiers can cross-reference the link.
 #[tauri::command]
 pub fn append_sigchain_action(
-    state: State<CryptoState>,
+    state: State<'_, CryptoState>,
     event_type: String,
     room_id: String,
     content: Value,

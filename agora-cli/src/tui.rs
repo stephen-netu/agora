@@ -302,7 +302,7 @@ async fn select_room(
     Ok(())
 }
 
-fn draw_ui(f: &mut Frame, state: &mut TuiState) {
+fn draw_ui(f: &mut Frame<'_>, state: &mut TuiState) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -324,7 +324,7 @@ fn draw_ui(f: &mut Frame, state: &mut TuiState) {
         .split(outer[1]);
 
     // Room list.
-    let items: Vec<ListItem> = state
+    let items: Vec<ListItem<'_>> = state
         .rooms
         .iter()
         .map(|(id, info)| {
@@ -349,7 +349,7 @@ fn draw_ui(f: &mut Frame, state: &mut TuiState) {
     let inner_width = msg_area.width.saturating_sub(2) as usize;
     state.msg_area_height = inner_height;
 
-    let msg_lines: Vec<Line> = state
+    let msg_lines: Vec<Line<'_>> = state
         .messages
         .iter()
         .map(|m| {

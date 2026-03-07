@@ -11,6 +11,8 @@
     clippy::must_use_candidate,
 )]
 
+//! Agora Server - Matrix-compatible homeserver implementation for the Agora platform.
+
 mod api;
 mod config;
 mod error;
@@ -228,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
         media_path,
         max_upload_bytes: config.media.max_upload_bytes,
         typing: Default::default(),
-        presence: crate::store::presence::new_presence_state(),
+        presence: store::presence::new_presence_state(),
         timestamp: timestamp.into_arc(),
         token_secret,
     };
@@ -239,7 +241,7 @@ async fn main() -> anyhow::Result<()> {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
         loop {
             interval.tick().await;
-            crate::api::presence::cleanup_stale_presence(&presence_cleanup_state).await;
+            api::presence::cleanup_stale_presence(&presence_cleanup_state).await;
         }
     });
 

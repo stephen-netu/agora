@@ -15,6 +15,7 @@ mod crypto;
 use crypto::commands::CryptoState;
 use std::sync::Mutex;
 
+/// Starts the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -36,6 +37,7 @@ pub fn run() {
             crypto::commands::get_identity_keys,
             crypto::commands::init_sigchain,
             crypto::commands::get_agent_id,
+            crypto::commands::get_agent_display_name,
             crypto::commands::append_sigchain_action,
             crypto::commands::check_sigchain_loop,
             crypto::commands::append_sigchain_refusal,

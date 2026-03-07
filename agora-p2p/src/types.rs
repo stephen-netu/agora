@@ -82,7 +82,7 @@ impl IdentitySource {
 use crate::transport::quic::QuicConfig as QuicConfigInner;
 
 /// WAN discovery mode for P2P peers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WanDiscoveryMode {
     /// WAN discovery is disabled
     #[default]
@@ -112,6 +112,7 @@ pub struct P2pConfig {
     /// Service name for mDNS advertisement
     pub service_name: String,
     /// Transport mode for P2P communication
+    #[serde(skip)]
     pub transport: TransportMode,
     /// WAN discovery mode
     pub wan_discovery: WanDiscoveryMode,
