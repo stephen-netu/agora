@@ -7894,24 +7894,24 @@ const NOUNS: &[&str; 4680] = &[
 /// Generate a human-readable deterministic name from an AgentId.
 ///
 /// Format: word1-word2#NNNN
-///   - word1: adjective from ADJECTIVES (bits 0-10 → index 0-2047)
-///   - word2: noun from NOUNS (bits 11-21 → index 0-2047)
-///   - NNNN: 4-digit checksum (bits 22-31 → 0-9999)
+///   - word1: adjective from ADJECTIVES (bits 0-11 → index 0-4095, covers 3187 entries)
+///   - word2: noun from NOUNS (bits 12-24 → index 0-8191, covers 4680 entries)
+///   - NNNN: 4-digit checksum (bits 25-38 → 0-16383, modulo 10000 for 0-9999)
 ///
-/// Returns ~42 billion unique identities (2048 × 2048 × 10000).
+/// Returns ~157 billion unique identities (4096 × 8192 × 10000).
 /// The checksum ensures two different AgentIds that map to the same word pair
 /// remain visually distinct.
 pub fn agent_display_name(id: &AgentId) -> String {
     let bytes = id.as_bytes();
 
-    // Extract bits 0-10 (11 bits) → adjective index (0-2047)
-    let adj_index = u16::from_be_bytes([bytes[0], bytes[1]]) & 0x7FF;
+    // Extract bits 0-11 (12 bits) → adjective index (0-4095, covers 3187 entries)
+    let adj_index = u16::from_be_bytes([bytes[0], bytes[1]]) & 0x0FFF;
 
-    // Extract bits 11-21 (11 bits) → noun index (0-2047)
-    let noun_index = (u16::from_be_bytes([bytes[1], bytes[2]]) >> 1) & 0x7FF;
+    // Extract bits 12-24 (13 bits) → noun index (0-8191, covers 4680 entries)
+    let noun_index = (u16::from_be_bytes([bytes[1], bytes[2]]) >> 4) & 0x1FFF;
 
-    // Extract bits 22-31 (10 bits) → checksum (0-1023), we use 0-9999
-    let checksum = ((u16::from_be_bytes([bytes[2], bytes[3]]) >> 7) & 0x3FF) % 10000;
+    // Extract bits 25-38 (14 bits) → checksum (0-16383), we use modulo 10000 for 0-9999
+    let checksum = ((u16::from_be_bytes([bytes[3], bytes[4]]) >> 2) & 0x3FFF) % 10000;
 
     let adjective = ADJECTIVES[adj_index as usize];
     let noun = NOUNS[noun_index as usize];
@@ -7922,12 +7922,12 @@ pub fn agent_display_name(id: &AgentId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AgentId;
+    use crate::identity::agent_id_from_bytes;
 
     #[test]
     fn test_agent_display_name_format() {
         let id_bytes = [0u8; 32];
-        let id = AgentId::from_bytes(&id_bytes).unwrap();
+        let id = agent_id_from_bytes(&id_bytes).unwrap();
         let name = agent_display_name(&id);
 
         assert!(name.contains('-'), "Should contain hyphen");
@@ -7940,7 +7940,7 @@ mod tests {
     #[test]
     fn test_agent_display_name_deterministic() {
         let id_bytes = [42u8; 32];
-        let id = AgentId::from_bytes(&id_bytes).unwrap();
+        let id = agent_id_from_bytes(&id_bytes).unwrap();
 
         let name1 = agent_display_name(&id);
         let name2 = agent_display_name(&id);
@@ -7950,8 +7950,8 @@ mod tests {
 
     #[test]
     fn test_agent_display_name_different_ids_different_names() {
-        let id1 = AgentId::from_bytes(&[0u8; 32]).unwrap();
-        let id2 = AgentId::from_bytes(&[1u8; 32]).unwrap();
+        let id1 = agent_id_from_bytes(&[0u8; 32]).unwrap();
+        let id2 = agent_id_from_bytes(&[1u8; 32]).unwrap();
 
         let name1 = agent_display_name(&id1);
         let name2 = agent_display_name(&id2);
@@ -7964,12 +7964,12 @@ mod tests {
 
     #[test]
     fn test_adjective_count() {
-        assert_eq!(ADJECTIVES.len(), 2048, "Should have 2048 adjectives");
+        assert_eq!(ADJECTIVES.len(), 3187, "Should have 3187 adjectives");
     }
 
     #[test]
     fn test_noun_count() {
-        assert_eq!(NOUNS.len(), 2048, "Should have 2048 nouns");
+        assert_eq!(NOUNS.len(), 4680, "Should have 4680 nouns");
     }
 
     #[test]
