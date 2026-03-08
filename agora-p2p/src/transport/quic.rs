@@ -14,7 +14,7 @@ use tracing::{info, debug};
 
 use crate::error::Error;
 use crate::transport::tls::{FingerprintStore, FingerprintServerVerifier};
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 
 pub struct QuicConfig {
     pub tls_cert: CertificateDer<'static>,
@@ -235,8 +235,7 @@ impl QuicTransport {
                 // For now, derive from the raw certificate bytes as a placeholder
                 let cert_bytes = cert.as_ref();
                 let hash = blake3::hash(cert_bytes);
-                AgentId::from_bytes(hash.as_bytes())
-                    .map_err(|e| Error::Transport(format!("failed to create AgentId: {:?}", e)))?
+                AgentId::from_bytes(*hash.as_bytes())
             }
             None => {
                 // No mTLS certificate — derive a deterministic AgentId from the remote
@@ -244,8 +243,7 @@ impl QuicTransport {
                 // IMPLEMENTATION_REQUIRED: Phase 1 — require certificate, reject uncertified peers.
                 tracing::warn!("No client certificate provided, deriving identity from remote address");
                 let hash = blake3::hash(addr.to_string().as_bytes());
-                AgentId::from_bytes(hash.as_bytes())
-                    .map_err(|e| Error::Transport(format!("failed to create peer id: {}", e)))?
+                AgentId::from_bytes(*hash.as_bytes())
             }
         };
         

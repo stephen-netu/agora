@@ -17,7 +17,7 @@ use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSi
 use rustls::DigitallySignedStruct;
 use rustls::{SignatureScheme, Error as TlsError};
 use std::collections::HashMap;
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 
 #[derive(Clone, Debug)]
 pub struct FingerprintStore {

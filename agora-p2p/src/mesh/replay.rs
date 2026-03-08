@@ -6,7 +6,7 @@
 use std::collections::{BTreeSet, BTreeMap};
 use std::sync::Arc;
 
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 use tokio::sync::RwLock;
 
 /// Maximum number of sequence numbers to track per peer.
@@ -107,7 +107,7 @@ impl Default for ReplayProtection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agora_crypto::AgentId;
+    use sovereign_sdk::AgentId;
 
     fn test_agent_id() -> AgentId {
         // Use a deterministic test AgentId

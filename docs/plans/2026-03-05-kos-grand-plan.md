@@ -1,5 +1,13 @@
 # Knowledge Operating System — Grand Plan
 
+
+> **⚠️ DEPRECATED:** This document describes the OLD architecture where `agora-crypto`
+> lived in KOS/agora. This is architecturally incorrect — crypto/identity primitives
+> must live in SOVEREIGN, not in apps built ON SOVEREIGN.
+>
+> **See:** [SOVEREIGN/.sovereign/docs/sovereign-crypto-architecture.md](./sovereign-crypto-architecture.md)
+> for the new architecture.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Define the integration architecture for the three KOS pillars — SOVEREIGN (identity), Agora (communication), and Atelier (knowledge) — so that each system can be built independently without duplicating primitives or making later integration harder.

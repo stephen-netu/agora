@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use std::path::PathBuf;
 
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 use serde::{Deserialize, Serialize};
 
 /// Source of identity keys
@@ -67,8 +67,7 @@ impl IdentitySource {
                 };
                 let mut key_bytes = [0u8; 32];
                 key_bytes.copy_from_slice(secret_key);
-                Ok(AgentId::from_bytes(&key_bytes)
-                    .map_err(|e| format!("invalid identity key: {}", e))?)
+                Ok(AgentId::from_bytes(key_bytes))
             }
             IdentitySource::Daemon(socket_path) => {
                 let _ = socket_path;

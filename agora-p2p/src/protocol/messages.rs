@@ -1,4 +1,4 @@
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

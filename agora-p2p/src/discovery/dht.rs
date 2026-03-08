@@ -15,7 +15,7 @@ use tracing::{info, warn, error};
 
 use crate::error::Error;
 use crate::types::{Peer, WanDiscoveryMode};
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 
 const MAX_ROUTING_TABLE_SIZE: usize = 1000;
 const DHT_QUERY_SEQUENCE_START: u64 = 0;

@@ -7,7 +7,7 @@ use tracing::{info, warn, debug};
 
 use crate::error::Error;
 use crate::types::Peer;
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 
 pub struct MdnsDiscovery {
     daemon: ServiceDaemon,

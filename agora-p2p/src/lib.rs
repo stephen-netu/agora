@@ -12,7 +12,7 @@ mod mesh;
 mod node;
 
 // Re-export only the public API
-pub use agora_crypto::AgentId;
+pub use sovereign_sdk::AgentId;
 pub use node::{P2pNode, MeshEvent};
 pub use types::{P2pConfig, TransportMode, YggdrasilConfig, WanDiscoveryMode, IdentitySource, Multiaddr};
 pub use sovereign_sdk::yggdrasil_addr_from_pubkey;

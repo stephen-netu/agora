@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn};
 
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 use crate::error::Error;
 use crate::types::{P2pConfig, WanDiscoveryMode};
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
@@ -285,7 +285,7 @@ impl P2pNode {
         target_agent_id: &str,
         proof: Option<Vec<u8>>,
     ) -> Result<(), Error> {
-        let peer_id = agora_crypto::AgentId::from_hex(target_agent_id)
+        let peer_id = sovereign_sdk::AgentId::from_hex(target_agent_id)
             .map_err(|e| Error::Broadcast(format!("invalid target agent_id: {}", e)))?;
         let msg = AmpMessage::CollaborationResponse {
             block_id: block_id.to_string(),
@@ -330,7 +330,7 @@ impl P2pNode {
         Ok(())
     }
 
-    pub fn agent_id(&self) -> &agora_crypto::AgentId {
+    pub fn agent_id(&self) -> &sovereign_sdk::AgentId {
         &self.config.agent_id
     }
 

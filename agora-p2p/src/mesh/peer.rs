@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use agora_crypto::identity::TrustState;
-use agora_crypto::AgentId;
+use sovereign_sdk::TrustState;
+use sovereign_sdk::AgentId;
 use quinn;
 use tokio::sync::{mpsc, RwLock};
 
@@ -227,7 +227,7 @@ impl MeshManager {
 
                 let (peer_agent_id, handshake_sequence) = match decode(&handshake_bytes) {
                     Ok(AmpMessage::Handshake { agent_id, sequence, .. }) => {
-                        match agora_crypto::AgentId::from_hex(&agent_id) {
+                        match sovereign_sdk::AgentId::from_hex(&agent_id) {
                             Ok(id) => (id, sequence),
                             Err(e) => {
                                 tracing::warn!("Invalid agent_id in handshake: {}", e);

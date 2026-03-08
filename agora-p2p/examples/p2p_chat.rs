@@ -7,7 +7,7 @@
 //!   cargo run --example p2p_chat -- --port 9000
 
 use agora_p2p::{P2pNode, P2pConfig, MeshEvent};
-use agora_crypto::AgentIdentity;
+use sovereign_sdk::AgentIdentity;
 use rand::RngCore;
 use std::io::{self, Write};
 
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting P2P node with AgentId: {}", agent_id.to_hex());
     
     let config = P2pConfig {
-        identity_source: agora_p2p::IdentitySource::default(),
+        identity_source: agora_p2p::IdentitySource::Testing(agent_id.clone()),
         agent_id,
         listen_port: port,
         service_name: "_agora._udp.local.".to_string(),
