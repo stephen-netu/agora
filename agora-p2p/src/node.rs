@@ -10,6 +10,8 @@ use sovereign_sdk::AgentId;
 use crate::error::Error;
 use crate::types::{P2pConfig, WanDiscoveryMode};
 use crate::transport::quic::{QuicTransport, QuicConfig, generate_self_signed_cert};
+use crate::transport::yggdrasil::{resolve_yggdrasil_bind_addr};
+use crate::types::{TransportMode, YggdrasilConfig};
 use crate::discovery::mdns::{MdnsDiscovery, MdnsPeerEvent};
 use crate::protocol::{AmpMessage, SerializedEvent};
 use crate::mesh::peer::MeshManager;
@@ -46,7 +48,34 @@ impl P2pNode {
         
         let (cert, key) = generate_self_signed_cert(&agent_id)?;
         
-        let quic_config = QuicConfig::new(cert, key);
+        // Determine bind address based on transport mode
+        let bind_addr = match &config.transport {
+            TransportMode::Quic(quic_cfg) => {
+                quic_cfg.bind_addr.or_else(|| Some(SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    config.listen_port,
+                )))
+            }
+            TransportMode::Yggdrasil(ygg_config) => {
+                // Try to bind to Yggdrasil address
+                resolve_yggdrasil_bind_addr(ygg_config)
+            }
+            TransportMode::Auto => {
+                // Auto: try Yggdrasil first, fall back to QUIC
+                if let Some(ygg_addr) = resolve_yggdrasil_bind_addr(&YggdrasilConfig::default()) {
+                    info!("Yggdrasil detected, binding to {}", ygg_addr);
+                    Some(ygg_addr)
+                } else {
+                    info!("No Yggdrasil daemon, using QUIC");
+                    Some(std::net::SocketAddr::new(
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                        config.listen_port,
+                    ))
+                }
+            }
+        };
+
+        let quic_config = QuicConfig::new(cert, key, bind_addr);
         
         let transport = QuicTransport::new(quic_config, agent_id.clone()).await?;
         let transport = Arc::new(transport);
@@ -228,7 +257,11 @@ impl P2pNode {
         let peers = self.mesh.connected_peers().await;
         peers.iter().map(|k| k.to_string()).collect()
     }
-    
+
+    pub async fn peer_addr(&self, peer_id: &str) -> Option<SocketAddr> {
+        self.mesh.peer_addr(peer_id).await
+    }
+
     pub async fn local_addr(&self) -> Result<SocketAddr, Error> {
         self.transport.local_addr()
     }

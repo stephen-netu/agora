@@ -19,15 +19,17 @@ use sovereign_sdk::AgentId;
 pub struct QuicConfig {
     pub tls_cert: CertificateDer<'static>,
     pub tls_key: PrivateKeyDer<'static>,
+    pub bind_addr: Option<SocketAddr>,  // None = random port, Some = bind to specific address
     pub max_idle_timeout: u64,
     pub keepalive_interval: u64,
 }
 
 impl QuicConfig {
-    pub fn new(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>) -> Self {
+    pub fn new(cert: CertificateDer<'static>, key: PrivateKeyDer<'static>, bind_addr: Option<SocketAddr>) -> Self {
         Self {
             tls_cert: cert,
             tls_key: key,
+            bind_addr,
             max_idle_timeout: 30_000,
             keepalive_interval: 15_000,
         }
@@ -123,7 +125,11 @@ impl QuicTransport {
     pub async fn new(config: QuicConfig, _agent_id: AgentId) -> Result<Self, Error> {
         let server_config = make_quinn_server_config(config.tls_cert.clone(), config.tls_key.clone_key(), config.max_idle_timeout, config.keepalive_interval)?;
         
-        let endpoint = Endpoint::server(server_config, "0.0.0.0:0".parse().map_err(|e: std::net::AddrParseError| Error::Transport(e.to_string()))?)?;
+        // Use configured bind address, or default to 0.0.0.0:0 (random port)
+        let bind_addr = config.bind_addr.unwrap_or_else(|| {
+            "0.0.0.0:0".parse().expect("hardcoded bind address should never fail to parse")
+        });
+        let endpoint = Endpoint::server(server_config, bind_addr).map_err(|e| Error::Transport(e.to_string()))?;
         
         let (tx, mut rx) = mpsc::channel::<mpsc::Sender<Incoming>>(100);
         
@@ -359,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn test_quic_config_default() {
         let (cert, key) = generate_self_signed_cert(&test_agent_id()).unwrap();
-        let config = QuicConfig::new(cert, key);
+        let config = QuicConfig::new(cert, key, None);
         
         assert_eq!(config.max_idle_timeout, 30_000);
         assert_eq!(config.keepalive_interval, 15_000);
@@ -369,7 +375,7 @@ mod tests {
     async fn test_quic_transport_creation() {
         rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
         let (cert, key) = generate_self_signed_cert(&test_agent_id()).unwrap();
-        let config = QuicConfig::new(cert, key);
+        let config = QuicConfig::new(cert, key, None);
         let agent_id = test_agent_id();
         
         let transport = QuicTransport::new(config, agent_id.clone()).await.unwrap();

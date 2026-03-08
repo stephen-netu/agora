@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -335,6 +336,12 @@ impl MeshManager {
 
     pub async fn connected_peers(&self) -> Vec<AgentId> {
         self.connections.read().await.keys().cloned().collect()
+    }
+
+    pub async fn peer_addr(&self, peer_id: &str) -> Option<SocketAddr> {
+        let connections = self.connections.read().await;
+        let agent_id = AgentId::from_hex(peer_id).ok()?;
+        connections.get(&agent_id).map(|p| p.connection.remote_addr)
     }
 
     pub async fn is_connected(&self, peer_id: &AgentId) -> bool {
