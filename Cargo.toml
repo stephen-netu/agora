@@ -1,11 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "agora-core",
     "agora-crypto",
-    "agora-server",
-    "agora-cli",
-    "agora-app",
     "agora-p2p",
 ]
 
@@ -16,7 +12,6 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/ethee/agora"
 
 [workspace.dependencies]
-agora-core = { path = "agora-core" }
 agora-crypto = { path = "agora-crypto" }
 agora-p2p = { path = "agora-p2p" }
 serde = { version = "1", features = ["derive"] }
