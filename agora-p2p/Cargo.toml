@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 agora-crypto = { workspace = true }
+sovereign-sdk = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

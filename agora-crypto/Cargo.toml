@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 x25519-dalek = { version = "2", features = ["static_secrets"] }
+sovereign-sdk = { workspace = true }
 ed25519-dalek = { version = "2" }
 hkdf = "0.12"
 hmac = "0.12"

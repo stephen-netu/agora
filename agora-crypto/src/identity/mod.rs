@@ -4,92 +4,43 @@
 //! 32-byte seed) and an associated `Sigchain` that records key events and
 //! behavioral actions in an authenticated, hash-linked log.
 
-use std::fmt;
-
-use blake3;
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
+pub use sovereign_sdk::AgentId;
 
 use crate::CryptoError;
 
-fn push_hex_byte(hex: &mut String, byte: u8) {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-    hex.push(HEX_CHARS[(byte >> 4) as usize] as char);
-    hex.push(HEX_CHARS[(byte & 0xf) as usize] as char);
+/// Derive an AgentId from an Ed25519 verifying key.
+pub fn agent_id_from_public_key(key: &VerifyingKey) -> AgentId {
+    AgentId::from_public_key(key.as_bytes())
 }
 
-// ── AgentId ───────────────────────────────────────────────────────────────────
-
-/// Compact 32-byte agent identifier derived from an Ed25519 verifying key.
-///
-/// Computed as `BLAKE3(verifying_key.to_bytes())`.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct AgentId(pub [u8; 32]);
-
-impl AgentId {
-    /// Derive an `AgentId` from an Ed25519 verifying key.
-    pub fn from_public_key(key: &VerifyingKey) -> Self {
-        Self(*blake3::hash(key.as_bytes()).as_bytes())
-    }
-
-    /// Return a reference to the raw 32-byte identifier.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    /// Return the lower-hex encoding of the 32-byte identifier.
-    pub fn to_hex(&self) -> String {
-        let mut hex = String::with_capacity(64);
-        for b in &self.0 {
-            push_hex_byte(&mut hex, *b);
-        }
-        hex
-    }
-
-    /// Parse an `AgentId` from a 64-character lower-hex string.
-    pub fn from_hex(s: &str) -> Result<Self, CryptoError> {
-        if s.len() != 64 {
-            return Err(CryptoError::InvalidSignature(format!(
-                "AgentId hex must be 64 chars, got {}",
-                s.len()
-            )));
-        }
-        let mut bytes = [0u8; 32];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
-                .map_err(|e| CryptoError::InvalidSignature(format!("invalid hex: {e}")))?;
-        }
-        Ok(Self(bytes))
-    }
-
-    /// Parse an `AgentId` from a 32-byte slice.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        if bytes.len() != 32 {
-            return Err(CryptoError::InvalidKey(format!(
-                "AgentId requires 32 bytes, got {}",
-                bytes.len()
-            )));
-        }
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(bytes);
-        Ok(Self(arr))
-    }
+/// Return the lower-hex encoding of the 32-byte identifier.
+pub fn agent_id_to_hex(id: &AgentId) -> String {
+    id.to_hex()
 }
 
-impl fmt::Display for AgentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut hex = String::with_capacity(16);
-        for b in &self.0[..8] {
-            push_hex_byte(&mut hex, *b);
-        }
-        write!(f, "agnt-{hex}")
-    }
+/// Return a reference to the raw 32-byte identifier.
+pub fn agent_id_as_bytes(id: &AgentId) -> &[u8; 32] {
+    id.as_bytes()
 }
 
-impl fmt::Debug for AgentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "AgentId({self})")
+/// Parse an AgentId from a 64-character lower-hex string.
+pub fn agent_id_from_hex(s: &str) -> Result<AgentId, CryptoError> {
+    AgentId::from_hex(s).map_err(|e| CryptoError::InvalidSignature(e.to_string()))
+}
+
+/// Parse an AgentId from a 32-byte slice.
+pub fn agent_id_from_bytes(bytes: &[u8]) -> Result<AgentId, CryptoError> {
+    if bytes.len() != 32 {
+        return Err(CryptoError::InvalidKey(format!(
+            "AgentId requires 32 bytes, got {}",
+            bytes.len()
+        )));
     }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(bytes);
+    Ok(AgentId::from_bytes(arr))
 }
 
 // ── Display Names ─────────────────────────────────────────────────────────────
@@ -112,7 +63,7 @@ impl AgentIdentity {
     /// identity (S-02 determinism guarantee).
     pub fn from_seed(seed: &[u8; 32]) -> Self {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(seed);
-        let agent_id = AgentId::from_public_key(&signing_key.verifying_key());
+        let agent_id = agent_id_from_public_key(&signing_key.verifying_key());
         Self {
             agent_id,
             signing_key,
@@ -364,7 +315,7 @@ impl SigchainBody {
                 merkle_root,
                 action_count,
             } => Ok(AnchorPayload {
-                agent_id: agent_id.0,
+                agent_id: *agent_id_as_bytes(&agent_id),
                 merkle_root: *merkle_root,
                 checkpoint_seqno: *covers_through_seqno,
                 action_count: *action_count,
@@ -965,9 +916,9 @@ mod tests {
     fn test_agent_id_display() {
         let identity = make_identity(0x01);
         let display = identity.agent_id.to_string();
-        assert!(display.starts_with("agnt-"), "display: {display}");
-        // 8 bytes = 16 hex chars.
-        assert_eq!(display.len(), 5 + 16, "display: {display}");
+        // Display is now full 64-char hex (sovereign_sdk format)
+        assert_eq!(display.len(), 64, "display: {display}");
+        assert!(display.chars().all(|c| c.is_ascii_hexdigit()), "display: {display}");
     }
 
     #[test]
