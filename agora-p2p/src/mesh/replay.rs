@@ -112,7 +112,7 @@ mod tests {
     fn test_agent_id() -> AgentId {
         // Use a deterministic test AgentId
         let bytes = [0u8; 32];
-        AgentId::from_bytes(&bytes).unwrap()
+        AgentId::from_bytes(bytes)
     }
 
     #[tokio::test]

@@ -1,4 +1,4 @@
-#![forbid(dead_code)]
+#![deny(dead_code)]
 #![forbid(unsafe_code)]
 //! Agora P2P Mesh Networking
 //! 
