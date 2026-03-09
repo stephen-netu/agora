@@ -39,11 +39,15 @@ pub struct PublicKey(pub [u8; 32]);
 #[derive(Clone)]
 pub struct SecretKey(pub [u8; 32]);
 
+// IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation - Phase 2-3
+#[allow(dead_code)]
 pub struct KeyPair {
     pub public: PublicKey,
     pub secret: SecretKey,
 }
 
+// IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation - Phase 2-3
+#[allow(dead_code)]
 impl KeyPair {
     pub fn generate() -> Result<Self> {
         // IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation

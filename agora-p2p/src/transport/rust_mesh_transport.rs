@@ -29,6 +29,11 @@ use tracing::{debug, info};
 
 use sovereign_sdk::AgentId;
 
+use crate::mesh::rust_mesh::{
+    CryptoProvider as RustMeshCrypto, RoutingTable as RustMeshRoutingTable,
+    YggdrasilAddress as RustMeshYggAddr,
+};
+
 /// Configuration for RustMesh transport
 #[derive(Debug, Clone)]
 pub struct RustMeshConfig {
@@ -66,36 +71,15 @@ pub struct MeshPeer {
 pub struct RustMeshTransport {
     config: RustMeshConfig,
     local_agent_id: AgentId,
-    local_yggdrasil_addr: YggdrasilAddr,
-    routing_table: Arc<RwLock<BTreeRoutingTable>>,
-    crypto_provider: Arc<dyn CryptoProvider>,
+    local_yggdrasil_addr: RustMeshYggAddr,
+    routing_table: Arc<RwLock<RustMeshRoutingTable>>,
+    crypto_provider: Arc<RustMeshCrypto>,
     peers: Arc<RwLock<BTreeMap<AgentId, MeshPeer>>>,
 }
 
-/// IPv6 address type for Yggdrasil mesh (alias for rust_mesh::YggdrasilAddress)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct YggdrasilAddr(pub [u8; 16]);
+pub type YggdrasilAddr = RustMeshYggAddr;
 
-/// Alias for YggdrasilAddress (rust_mesh compatibility)
-pub type YggdrasilAddress = YggdrasilAddr;
-
-impl YggdrasilAddr {
-    pub fn from_octets(octets: [u8; 16]) -> Self {
-        Self(octets)
-    }
-
-    pub fn to_socket_addr(&self, port: u16) -> SocketAddr {
-        SocketAddr::new(std::net::IpAddr::V6(std::net::Ipv6Addr::from(self.0)), port)
-    }
-
-    pub fn is_in_yggdrasil_range(&self) -> bool {
-        (self.0[0] & 0xfe) == 0x02
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 16] {
-        &self.0
-    }
-}
+pub type YggdrasilAddress = RustMeshYggAddr;
 
 /// Trait for cryptographic operations (to be replaced by rust_mesh::CryptoProvider)
 pub trait CryptoProvider: Send + Sync {
@@ -103,50 +87,12 @@ pub trait CryptoProvider: Send + Sync {
     fn decrypt(&self, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String>;
 }
 
-/// Derive a Yggdrasil-format IPv6 address from raw bytes.
-///
-/// This follows the Yggdrasil address derivation scheme:
-/// - The input bytes are hashed using SHA-512
-/// - The first 16 bytes form the IPv6 address in 200::/7 range
-///
-/// # Arguments
-///
-/// * `input_bytes` - Raw bytes to derive address from (e.g., Ed25519 public key)
-///
-/// # Returns
-///
-/// A 16-byte array representing the Yggdrasil IPv6 address
-pub fn derive_address_from_bytes(input_bytes: &[u8; 32]) -> YggdrasilAddr {
-    use sha2::{Sha512, Digest};
-
-    let mut hasher = Sha512::new();
-    hasher.update(input_bytes.as_slice());
-    let hash = hasher.finalize();
-
-    let mut addr_bytes = [0u8; 16];
-    addr_bytes.copy_from_slice(&hash[..16]);
-
-    addr_bytes[0] = 0x02 | (addr_bytes[0] & 0x01);
-
-    YggdrasilAddr(addr_bytes)
+pub fn derive_address_from_bytes(input_bytes: &[u8; 32]) -> RustMeshYggAddr {
+    RustMeshYggAddr::from_public_key(input_bytes)
 }
 
-/// Derive a Yggdrasil-format IPv6 address from an Ed25519 public key.
-///
-/// This follows the Yggdrasil address derivation scheme:
-/// - The public key is hashed using SHA-512
-/// - The first 16 bytes form the IPv6 address in 200::/7 range
-/// - The node ID is derived from the full hash
-///
-/// # Arguments
-///
-/// * `public_key` - The Ed25519 verifying key
-///
-/// # Returns
-///
-/// A 16-byte array representing the Yggdrasil IPv6 address
-pub fn derive_address_from_keypair(public_key: &VerifyingKey) -> YggdrasilAddr {
-    derive_address_from_bytes(public_key.as_bytes())
+pub fn derive_address_from_keypair(public_key: &VerifyingKey) -> RustMeshYggAddr {
+    RustMeshYggAddr::from_public_key(public_key.as_bytes())
 }
 
 /// Create a new RustMesh transport instance.
@@ -170,21 +116,21 @@ pub fn derive_address_from_keypair(public_key: &VerifyingKey) -> YggdrasilAddr {
 pub fn new_rust_mesh_transport(
     config: RustMeshConfig,
     agent_id: AgentId,
-    crypto_provider: Arc<dyn CryptoProvider>,
+    crypto_provider: Arc<RustMeshCrypto>,
 ) -> RustMeshTransport {
     let agent_id_bytes: &[u8; 32] = agent_id.as_bytes();
     let local_yggdrasil_addr = derive_address_from_bytes(agent_id_bytes);
 
     info!(
         "Created RustMesh transport with address: {}",
-        format_ipv6(&local_yggdrasil_addr.0)
+        local_yggdrasil_addr
     );
 
     RustMeshTransport {
         config,
         local_agent_id: agent_id,
         local_yggdrasil_addr,
-        routing_table: Arc::new(RwLock::new(BTreeRoutingTable::new())),
+        routing_table: Arc::new(RwLock::new(RustMeshRoutingTable::new())),
         crypto_provider,
         peers: Arc::new(RwLock::new(BTreeMap::new())),
     }
@@ -192,7 +138,7 @@ pub fn new_rust_mesh_transport(
 
 impl RustMeshTransport {
     /// Get the local Yggdrasil IPv6 address
-    pub fn local_address(&self) -> YggdrasilAddr {
+    pub fn local_address(&self) -> RustMeshYggAddr {
         self.local_yggdrasil_addr.clone()
     }
 
@@ -203,8 +149,10 @@ impl RustMeshTransport {
 
     /// Get the socket address to bind to for QUIC
     pub fn bind_address(&self) -> Option<SocketAddr> {
-        if self.local_yggdrasil_addr.is_in_yggdrasil_range() {
-            Some(self.local_yggdrasil_addr.to_socket_addr(self.config.listen_port))
+        if self.local_yggdrasil_addr.is_global() {
+            let addr_bytes = self.local_yggdrasil_addr.as_bytes();
+            let ipv6 = std::net::Ipv6Addr::from(*addr_bytes);
+            Some(SocketAddr::new(std::net::IpAddr::V6(ipv6), self.config.listen_port))
         } else {
             None
         }
@@ -214,14 +162,16 @@ impl RustMeshTransport {
     pub async fn add_peer(&self, peer: MeshPeer) {
         debug!("Adding peer {} to routing table", peer.agent_id);
 
-        let yggdrasil_addr = peer.yggdrasil_addr.clone();
+        let socket_addr = peer.socket_addr;
         let agent_id = peer.agent_id.clone();
 
         let mut peers = self.peers.write().await;
         peers.insert(peer.agent_id.clone(), peer);
 
-        let mut routing = self.routing_table.write().await;
-        routing.insert(agent_id, yggdrasil_addr);
+        if let Some(addr) = socket_addr {
+            let mut routing = self.routing_table.write().await;
+            routing.insert(agent_id, addr);
+        }
     }
 
     /// Remove a peer from the routing table
@@ -237,17 +187,17 @@ impl RustMeshTransport {
 
     /// Get a peer's socket address by agent ID
     pub async fn get_peer_address(&self, agent_id: &AgentId) -> Option<SocketAddr> {
-        let peers = self.peers.read().await;
-        peers.get(agent_id).and_then(|p| p.socket_addr)
+        let routing = self.routing_table.read().await;
+        routing.lookup(agent_id).map(|e| e.socket_addr)
     }
 
     /// Get the routing table
-    pub async fn routing_table(&self) -> Arc<RwLock<BTreeRoutingTable>> {
+    pub async fn routing_table(&self) -> Arc<RwLock<RustMeshRoutingTable>> {
         self.routing_table.clone()
     }
 
     /// Get the crypto provider
-    pub fn crypto(&self) -> Arc<dyn CryptoProvider> {
+    pub fn crypto(&self) -> Arc<RustMeshCrypto> {
         self.crypto_provider.clone()
     }
 
@@ -273,13 +223,20 @@ impl RustMeshTransport {
         peer_id: &AgentId,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, String> {
+        use crate::mesh::rust_mesh::crypto::{ecies_encrypt, SharedSecret};
+        
         let peers = self.peers.read().await;
         let peer = peers
             .get(peer_id)
             .ok_or_else(|| "Peer not found".to_string())?;
 
-        self.crypto_provider
-            .encrypt(peer.yggdrasil_addr.as_bytes(), plaintext)
+        let key_bytes = peer.yggdrasil_addr.as_bytes();
+        let mut shared_bytes = [0u8; 32];
+        shared_bytes[..16].copy_from_slice(key_bytes);
+        shared_bytes[16..].copy_from_slice(key_bytes);
+        let shared = SharedSecret(shared_bytes);
+
+        ecies_encrypt(&shared, plaintext, 1).map_err(|e| e.to_string())
     }
 
     /// Decrypt a message from a specific peer
@@ -288,71 +245,23 @@ impl RustMeshTransport {
         peer_id: &AgentId,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>, String> {
+        use crate::mesh::rust_mesh::crypto::{ecies_decrypt, SharedSecret};
+        
         let peers = self.peers.read().await;
         let peer = peers
             .get(peer_id)
             .ok_or_else(|| "Peer not found".to_string())?;
 
-        self.crypto_provider
-            .decrypt(peer.yggdrasil_addr.as_bytes(), ciphertext)
+        let key_bytes = peer.yggdrasil_addr.as_bytes();
+        let mut shared_bytes = [0u8; 32];
+        shared_bytes[..16].copy_from_slice(key_bytes);
+        shared_bytes[16..].copy_from_slice(key_bytes);
+        let shared = SharedSecret(shared_bytes);
+
+        ecies_decrypt(&shared, ciphertext, 1).map_err(|e| e.to_string())
     }
 }
 
-/// Format an IPv6 address as a string for logging
-fn format_ipv6(octets: &[u8; 16]) -> String {
-    format!(
-        "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}::{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        octets[0], octets[1], octets[2], octets[3],
-        octets[4], octets[5], octets[6], octets[7],
-        octets[8], octets[9], octets[10], octets[11],
-        octets[12], octets[13], octets[14], octets[15]
-    )
-}
-
-/// Trait for routing table operations
-pub trait RoutingTable: Send + Sync {
-    fn insert(&mut self, agent_id: AgentId, addr: YggdrasilAddr);
-    fn remove(&mut self, agent_id: &AgentId);
-    fn get(&self, agent_id: &AgentId) -> Option<YggdrasilAddr>;
-    fn get_all(&self) -> BTreeMap<AgentId, YggdrasilAddr>;
-}
-
-/// In-memory routing table implementation using BTreeMap (S-02 compliant)
-pub struct BTreeRoutingTable {
-    routes: BTreeMap<AgentId, YggdrasilAddr>,
-}
-
-impl BTreeRoutingTable {
-    pub fn new() -> Self {
-        Self {
-            routes: BTreeMap::new(),
-        }
-    }
-}
-
-impl Default for BTreeRoutingTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RoutingTable for BTreeRoutingTable {
-    fn insert(&mut self, agent_id: AgentId, addr: YggdrasilAddr) {
-        self.routes.insert(agent_id, addr);
-    }
-
-    fn remove(&mut self, agent_id: &AgentId) {
-        self.routes.remove(agent_id);
-    }
-
-    fn get(&self, agent_id: &AgentId) -> Option<YggdrasilAddr> {
-        self.routes.get(agent_id).cloned()
-    }
-
-    fn get_all(&self) -> BTreeMap<AgentId, YggdrasilAddr> {
-        self.routes.clone()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -368,38 +277,36 @@ mod tests {
         ];
         let addr = derive_address_from_bytes(&test_key_bytes);
 
-        assert!(addr.is_in_yggdrasil_range());
+        assert!(addr.is_global());
     }
 
     #[test]
     fn test_yggdrasil_addr_is_in_range() {
-        let addr = YggdrasilAddr::from_octets([
+        let addr = YggdrasilAddr::from_bytes([
             0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
         ]);
-        assert!(addr.is_in_yggdrasil_range());
+        assert!(addr.is_global());
 
-        let addr_outside = YggdrasilAddr::from_octets([
+        let addr_outside = RustMeshYggAddr::from_bytes([
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
         ]);
-        assert!(!addr_outside.is_in_yggdrasil_range());
+        assert!(!addr_outside.is_global());
     }
 
     #[test]
     fn test_routing_table() {
-        let mut table = BTreeRoutingTable::new();
+        
+        let mut table = RustMeshRoutingTable::new();
         let agent_id = AgentId::from_hex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20").unwrap();
-        let addr = YggdrasilAddr::from_octets([
-            0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        ]);
+        let socket_addr: SocketAddr = "[200::1]:5000".parse().unwrap();
 
-        table.insert(agent_id.clone(), addr.clone());
-        assert_eq!(table.get(&agent_id), Some(addr));
+        table.insert(agent_id.clone(), socket_addr);
+        assert!(table.lookup(&agent_id).is_some());
 
         table.remove(&agent_id);
-        assert_eq!(table.get(&agent_id), None);
+        assert!(table.lookup(&agent_id).is_none());
     }
 
     #[tokio::test]
@@ -407,24 +314,16 @@ mod tests {
         let config = RustMeshConfig::default();
         let agent_id = AgentId::from_hex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20").unwrap();
 
-        struct MockCryptoProvider;
-        impl CryptoProvider for MockCryptoProvider {
-            fn encrypt(&self, _key: &[u8], _plaintext: &[u8]) -> Result<Vec<u8>, String> {
-                Ok(_plaintext.to_vec())
-            }
-            fn decrypt(&self, _key: &[u8], _ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-                Ok(_ciphertext.to_vec())
-            }
-        }
+        let crypto_provider = Arc::new(RustMeshCrypto::new());
 
         let transport = new_rust_mesh_transport(
             config,
             agent_id.clone(),
-            Arc::new(MockCryptoProvider),
+            crypto_provider,
         );
 
         let peer_agent_id = AgentId::from_hex("deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef").unwrap();
-        let peer_ygg_addr = YggdrasilAddr::from_octets([
+        let peer_ygg_addr = RustMeshYggAddr::from_bytes([
             0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
         ]);
