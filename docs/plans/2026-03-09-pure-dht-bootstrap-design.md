@@ -291,7 +291,70 @@ const DEFAULT_STUN: &[&str] = &[
 - Two friends on different networks (home WiFi, mobile hotspot)
 - Verify: peer discovery → connect → message exchange
 
-## 10. Open Questions
+## 10. Implementation Notes
+
+### 10.1 Transport Trait
+
+`impl Future` in trait definitions requires Rust 1.75+. For compatibility, use `Pin<Box<dyn Future<...>>>`:
+
+```rust
+trait Transport {
+    fn connect(&self, peer: &AgentId, addr: SocketAddr) 
+        -> Pin<Box<dyn Future<Output = Result<Connection>> + Send>>;
+    
+    fn accept(&self) 
+        -> Pin<Box<dyn Future<Output = Connection> + Send>>;
+}
+```
+
+### 10.2 Seed Node Binary
+
+Use the same binary with a `--seed` flag:
+
+```bash
+# Run as seed node (DHT only, no UI)
+agora --seed
+
+# Run normally (full client)
+agora
+```
+
+Seed mode:
+- Binds to UDP 6881 for DHT
+- No mDNS, no QUIC transport
+- Minimal resource usage
+- Can run on $5 VPS or small always-on machine
+
+### 10.3 Port Allocation
+
+DHT and QUIC use separate ports:
+
+| Service | Protocol | Default Port |
+|---------|----------|--------------|
+| DHT | UDP | 6881 |
+| QUIC | UDP | Configurable (0 = random) |
+
+Rationale: Sharing ports adds complexity. Separate ports is cleaner.
+
+### 10.4 Sigchain Verification
+
+Deferred to **v2**. For v1:
+- Peers prove identity via Ed25519 key (from identity crate)
+- Connection scoring handles reliability
+- Sigchain verification adds complexity, not blocking for initial connectivity
+
+### 10.5 Configuration Update
+
+```toml
+[p2p.seed]
+# Run as DHT seed node (default: false)
+enabled = false
+
+# Port for DHT (default: 6881)
+port = 6881
+```
+
+## 11. Open Questions
 
 1. **Seed hosting:** Who runs default seeds? (Recommend: host 2-3 on small VPS)
 2. **DHT crate final choice:** Which crate best fits criteria?
