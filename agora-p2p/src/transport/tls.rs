@@ -16,19 +16,19 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSignatureValid};
 use rustls::DigitallySignedStruct;
 use rustls::{SignatureScheme, Error as TlsError};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use sovereign_sdk::AgentId;
 
 #[derive(Clone, Debug)]
 pub struct FingerprintStore {
-    inner: Arc<RwLock<HashMap<String, [u8; 32]>>>,
+    inner: Arc<RwLock<BTreeMap<String, [u8; 32]>>>,
 }
 
 /// IMPLEMENTATION_REQUIRED: wired in future wt-XXX for certificate fingerprint verification
 impl FingerprintStore {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(HashMap::new())),
+            inner: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
     
@@ -53,7 +53,7 @@ impl FingerprintStore {
         self.inner.read().ok().and_then(|guard| guard.get(agent_id).copied())
     }
     
-    pub fn inner(&self) -> &Arc<RwLock<HashMap<String, [u8; 32]>>> {
+    pub fn inner(&self) -> &Arc<RwLock<BTreeMap<String, [u8; 32]>>> {
         &self.inner
     }
     

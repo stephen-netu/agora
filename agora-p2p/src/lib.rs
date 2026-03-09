@@ -1,3 +1,5 @@
+#![forbid(dead_code)]
+#![forbid(unsafe_code)]
 //! Agora P2P Mesh Networking
 //! 
 //! This crate provides peer-to-peer networking capabilities for Agora,

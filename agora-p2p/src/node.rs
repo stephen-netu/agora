@@ -44,7 +44,7 @@ impl P2pNode {
         // Resolve agent_id from identity_source (file or daemon)
         let agent_id = config.identity_source.resolve_agent_id()
             .await
-            .map_err(|e| Error::Config(e))?;
+            .map_err(Error::Config)?;
         
         let (cert, key) = generate_self_signed_cert(&agent_id)?;
         

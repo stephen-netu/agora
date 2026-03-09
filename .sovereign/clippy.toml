@@ -1,0 +1,18 @@
+# Agora Clippy Configuration
+# Blocks S-02 violations (determinism)
+
+# Time (S-02) - determinism violations
+disallowed-methods = [
+    { path = "std::time::SystemTime::now", reason = "S-02: Use deterministic sequence instead" },
+    { path = "std::time::Instant::now", reason = "S-02: Use deterministic alternatives" },
+    { path = "std::thread::sleep", reason = "S-02: Use tokio::time::sleep with deterministic duration" },
+]
+
+# Additional disallowed types (S-02)
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "S-02: Use BTreeMap for deterministic iteration" },
+    { path = "std::collections::HashSet", reason = "S-02: Use BTreeSet for deterministic iteration" },
+]
+
+# MSRV ensures consistent behavior
+msrv = "1.75"

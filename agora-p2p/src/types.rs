@@ -131,7 +131,7 @@ impl Default for P2pConfig {
 }
 
 /// Configuration for Yggdrasil transport
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct YggdrasilConfig {
     /// Admin socket path for Yggdrasil daemon
     /// If None, uses platform default
@@ -140,30 +140,16 @@ pub struct YggdrasilConfig {
     pub listen_port: u16,
 }
 
-impl Default for YggdrasilConfig {
-    fn default() -> Self {
-        Self {
-            admin_socket: None,
-            listen_port: 0,
-        }
-    }
-}
-
 /// Transport mode for P2P communication
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum TransportMode {
     /// QUIC transport with custom configuration
     Quic(Arc<QuicConfigInner>),
     /// Yggdrasil mesh transport with custom configuration
     Yggdrasil(YggdrasilConfig),
     /// Automatically select transport based on availability
+    #[default]
     Auto,
-}
-
-impl Default for TransportMode {
-    fn default() -> Self {
-        TransportMode::Auto
-    }
 }
 
 /// Multiaddress type for P2P connections (simple string wrapper)

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,7 +47,7 @@ pub struct QuicTransport {
     endpoint: Endpoint,
     config: QuicConfig,
     fingerprint_store: FingerprintStore,
-    connections: Arc<RwLock<HashMap<AgentId, QuicConnection>>>,
+    connections: Arc<RwLock<BTreeMap<AgentId, QuicConnection>>>,
     incoming_sender: mpsc::Sender<mpsc::Sender<Incoming>>,
 }
 
@@ -160,7 +160,7 @@ impl QuicTransport {
             endpoint,
             config,
             fingerprint_store: FingerprintStore::new(),
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            connections: Arc::new(RwLock::new(BTreeMap::new())),
             incoming_sender: tx,
         })
     }
@@ -168,7 +168,7 @@ impl QuicTransport {
     pub async fn listen(&self, addr: SocketAddr) -> Result<(), Error> {
         let server_config = make_quinn_server_config(self.config.tls_cert.clone(), self.config.tls_key.clone_key(), self.config.max_idle_timeout, self.config.keepalive_interval)?;
         
-        let _ = self.endpoint.set_server_config(Some(server_config));
+        self.endpoint.set_server_config(Some(server_config));
         
         info!("QUIC transport listening on: {}", addr);
         Ok(())
@@ -290,9 +290,12 @@ impl QuicTransport {
         info!("Closing QUIC transport");
         
         let mut connections = self.connections.write().await;
-        for (peer_id, conn) in connections.drain() {
-            debug!("Closing connection to peer: {}", peer_id);
-            conn.connection.close(0u8.into(), b"closing".as_ref());
+        let peer_ids: Vec<_> = connections.keys().cloned().collect();
+        for peer_id in peer_ids {
+            if let Some(conn) = connections.remove(&peer_id) {
+                debug!("Closing connection to peer: {}", peer_id);
+                conn.connection.close(0u8.into(), b"closing".as_ref());
+            }
         }
         
         self.endpoint.close(0u8.into(), b"transport closed".as_ref());

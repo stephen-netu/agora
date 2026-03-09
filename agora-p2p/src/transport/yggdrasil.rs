@@ -72,7 +72,7 @@ fn parse_yggdrasil_address(json: &str) -> Option<Ipv6Addr> {
 /// - `Some(SocketAddr)` with the Yggdrasil IPv6 address if the daemon is running
 /// - `None` if Yggdrasil is unavailable (caller should fall back to QUIC on 0.0.0.0)
 pub fn resolve_yggdrasil_bind_addr(config: &YggdrasilConfig) -> Option<SocketAddr> {
-    let admin_socket = config.admin_socket.as_ref().map(|s| Path::new(s));
+    let admin_socket = config.admin_socket.as_ref().map(Path::new);
     let ygg_addr = probe_yggdrasil_daemon(admin_socket)?;
     Some(SocketAddr::new(
         std::net::IpAddr::V6(ygg_addr),

@@ -2,7 +2,7 @@ use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use tracing::{info, warn, debug};
 
 use crate::error::Error;
@@ -11,8 +11,8 @@ use sovereign_sdk::AgentId;
 
 pub struct MdnsDiscovery {
     daemon: ServiceDaemon,
-    service_to_agent: Arc<RwLock<HashMap<String, String>>>,
-    peers: Arc<RwLock<HashMap<String, Peer>>>,
+    service_to_agent: Arc<RwLock<BTreeMap<String, String>>>,
+    peers: Arc<RwLock<BTreeMap<String, Peer>>>,
     peer_events: mpsc::Sender<MdnsPeerEvent>,
     service_type: String,
 }
@@ -56,8 +56,8 @@ impl MdnsDiscovery {
         Ok((
             Self {
                 daemon,
-                service_to_agent: Arc::new(RwLock::new(HashMap::new())),
-                peers: Arc::new(RwLock::new(HashMap::new())),
+                service_to_agent: Arc::new(RwLock::new(BTreeMap::new())),
+                peers: Arc::new(RwLock::new(BTreeMap::new())),
                 peer_events: tx,
                 service_type: service_type.to_string(),
             },
@@ -82,6 +82,7 @@ impl MdnsDiscovery {
             format!("{}.local.", service_type)
         };
         
+        // S-02 EXCEPTION: mdns-sd library requires HashMap for ServiceInfo API
         let mut properties = HashMap::new();
         properties.insert("agent_id".to_string(), agent_id.to_string());
         
@@ -106,19 +107,14 @@ impl MdnsDiscovery {
         let peer_events = self.peer_events.clone();
         
         tokio::spawn(async move {
-            loop {
-                match receiver.recv_async().await {
-                    Ok(event) => {
-                        if let Err(e) = Self::handle_event(
-                            event,
-                            &service_to_agent,
-                            &peers,
-                            &peer_events,
-                        ).await {
-                            warn!("mDNS event error: {}", e);
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok(event) = receiver.recv_async().await {
+                if let Err(e) = Self::handle_event(
+                    event,
+                    &service_to_agent,
+                    &peers,
+                    &peer_events,
+                ).await {
+                    warn!("mDNS event error: {}", e);
                 }
             }
         });
@@ -128,8 +124,8 @@ impl MdnsDiscovery {
     
     async fn handle_event(
         event: ServiceEvent,
-        service_to_agent: &Arc<RwLock<HashMap<String, String>>>,
-        peers: &Arc<RwLock<HashMap<String, Peer>>>,
+        service_to_agent: &Arc<RwLock<BTreeMap<String, String>>>,
+        peers: &Arc<RwLock<BTreeMap<String, Peer>>>,
         peer_events: &mpsc::Sender<MdnsPeerEvent>,
     ) -> Result<(), Error> {
         match event {
