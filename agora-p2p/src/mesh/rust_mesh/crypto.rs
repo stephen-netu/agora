@@ -201,15 +201,36 @@ impl CryptoProvider {
             .get(peer_id)
             .ok_or(CryptoError::SessionNotFound)?;
 
-        ecies_encrypt(&shared, plaintext, sequence)
+        let ciphertext = ecies_encrypt(&shared, plaintext, sequence)?;
+
+        // Prepend the 8-byte little-endian sequence so the receiver can
+        // reconstruct the nonce without relying on its own local counter.
+        let mut framed = Vec::with_capacity(8 + ciphertext.len());
+        framed.extend_from_slice(&sequence.to_le_bytes());
+        framed.extend_from_slice(&ciphertext);
+        Ok(framed)
     }
 
-    pub fn decrypt_from_peer(&mut self, peer_id: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt_from_peer(&mut self, peer_id: &[u8; 32], framed: &[u8]) -> Result<Vec<u8>> {
+        // The first 8 bytes are the sender's sequence (little-endian); the rest
+        // is the actual AEAD ciphertext.  Using the sender's sequence ensures
+        // the nonce matches exactly what was used during encryption.
+        if framed.len() < 8 {
+            return Err(CryptoError::DecryptionFailed(
+                "Message too short to contain sequence header".to_string(),
+            ));
+        }
+        let sequence = u64::from_le_bytes(
+            framed[..8]
+                .try_into()
+                .map_err(|_| CryptoError::DecryptionFailed("Sequence extraction failed".to_string()))?,
+        );
+        let ciphertext = &framed[8..];
+
         let shared = *self
             .sessions
             .get(peer_id)
             .ok_or(CryptoError::SessionNotFound)?;
-        let sequence = self.session_sequence.load(Ordering::SeqCst);
 
         ecies_decrypt(&shared, ciphertext, sequence)
     }
@@ -256,15 +277,20 @@ mod tests {
 
     #[test]
     fn test_shared_secret() {
-        let alice = KeyPair::generate().unwrap();
-        let bob = KeyPair::generate().unwrap();
+        // Use distinct seeds so Alice and Bob have genuinely different keypairs.
+        let mut alice_seed = [0u8; 32];
+        alice_seed[0] = 1;
+        let mut bob_seed = [0u8; 32];
+        bob_seed[0] = 2;
+
+        let alice = KeyPair::generate_deterministic(alice_seed).unwrap();
+        let bob = KeyPair::generate_deterministic(bob_seed).unwrap();
 
         let secret_alice = compute_shared_secret(&alice.secret, &bob.public).unwrap();
         let secret_bob = compute_shared_secret(&bob.secret, &alice.public).unwrap();
 
-        // In proper X25519, these should be equal (but our placeholder isn't)
-        assert_eq!(secret_alice.0.len(), 32);
-        assert_eq!(secret_bob.0.len(), 32);
+        // X25519 DH: both sides must arrive at the same shared secret.
+        assert_eq!(secret_alice.0, secret_bob.0);
     }
 
     #[test]

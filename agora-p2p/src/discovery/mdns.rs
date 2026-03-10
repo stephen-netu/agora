@@ -5,6 +5,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn, debug};
 
+// S-02 exception: mdns-sd library boundary requires HashMap — not stored or propagated
+#[allow(clippy::disallowed_types)]
 fn to_hashmap(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
     pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }

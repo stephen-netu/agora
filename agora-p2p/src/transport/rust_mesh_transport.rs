@@ -74,7 +74,7 @@ pub struct RustMeshTransport {
     local_agent_id: AgentId,
     local_yggdrasil_addr: RustMeshYggAddr,
     routing_table: Arc<RwLock<RustMeshRoutingTable>>,
-    crypto_provider: Arc<RustMeshCrypto>,
+    crypto_provider: Arc<RwLock<RustMeshCrypto>>,
     peers: Arc<RwLock<BTreeMap<AgentId, MeshPeer>>>,
 }
 
@@ -117,7 +117,7 @@ pub fn derive_address_from_keypair(public_key: &VerifyingKey) -> RustMeshYggAddr
 pub fn new_rust_mesh_transport(
     config: RustMeshConfig,
     agent_id: AgentId,
-    crypto_provider: Arc<RustMeshCrypto>,
+    crypto_provider: Arc<RwLock<RustMeshCrypto>>,
 ) -> RustMeshTransport {
     let agent_id_bytes: &[u8; 32] = agent_id.as_bytes();
     let local_yggdrasil_addr = derive_address_from_bytes(agent_id_bytes);
@@ -198,7 +198,7 @@ impl RustMeshTransport {
     }
 
     /// Get the crypto provider
-    pub fn crypto(&self) -> Arc<RustMeshCrypto> {
+    pub fn crypto(&self) -> Arc<RwLock<RustMeshCrypto>> {
         self.crypto_provider.clone()
     }
 
@@ -299,7 +299,7 @@ mod tests {
         let config = RustMeshConfig::default();
         let agent_id = AgentId::from_hex("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20").unwrap();
 
-        let crypto_provider = Arc::new(RustMeshCrypto::new());
+        let crypto_provider = Arc::new(RwLock::new(RustMeshCrypto::new()));
 
         let transport = new_rust_mesh_transport(
             config,

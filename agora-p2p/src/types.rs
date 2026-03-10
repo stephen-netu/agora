@@ -121,7 +121,7 @@ impl Default for P2pConfig {
     fn default() -> Self {
         Self {
             identity_source: IdentitySource::default(),
-            agent_id: AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+            agent_id: AgentId::from_bytes([0u8; 32]),
             listen_port: 0,
             service_name: "_agora._udp.local.".to_string(),
             transport: TransportMode::Auto,
