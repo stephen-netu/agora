@@ -25,6 +25,9 @@ pub enum Error {
     #[error("config error: {0}")]
     Config(String),
 
+    #[error("invalid peer: {0}")]
+    InvalidPeer(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }

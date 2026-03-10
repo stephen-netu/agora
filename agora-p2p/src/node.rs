@@ -381,6 +381,23 @@ impl P2pNode {
         self.mesh.try_connect(&peer).await
     }
 
+    /// Attempt to connect directly to a peer by AgentId hex string and network address.
+    /// Used for manual WAN dialing when mDNS discovery is unavailable.
+    pub async fn connect_to_peer_by_addr(&self, peer_agent_id: &str, address: &str) -> Result<(), Error> {
+        let peer_id = sovereign_sdk::AgentId::from_hex(peer_agent_id)
+            .map_err(|e| Error::InvalidPeer(e.to_string()))?;
+        let peer = crate::types::Peer {
+            agent_id: peer_id,
+            addresses: vec![address.to_string()],
+        };
+        self.mesh.try_connect(&peer).await
+    }
+
+    /// Returns the local QUIC listen address as a string, for sharing out-of-band.
+    pub fn local_address(&self) -> Option<String> {
+        self.transport.local_addr().ok().map(|a| a.to_string())
+    }
+
     pub fn agent_id(&self) -> &sovereign_sdk::AgentId {
         &self.config.agent_id
     }
