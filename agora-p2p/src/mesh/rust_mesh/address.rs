@@ -15,9 +15,6 @@ pub use sovereign_sdk::yggdrasil_addr_from_pubkey;
 
 // IMPLEMENTATION_REQUIRED: Used for Yggdrasil address formatting in to_address_string() and parse()
 const YGGDRASIL_PREFIX: &str = "020";
-// IMPLEMENTATION_REQUIRED: Length of the YGGDRASIL_PREFIX used in address parsing
-#[allow(dead_code)]
-const YGGDRASIL_PREFIX_LEN: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct YggdrasilAddress {

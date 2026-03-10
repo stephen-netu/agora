@@ -29,6 +29,7 @@ use tracing::{debug, info};
 
 use sovereign_sdk::AgentId;
 
+use crate::error::Error;
 use crate::mesh::rust_mesh::{
     CryptoProvider as RustMeshCrypto, RoutingTable as RustMeshRoutingTable,
     YggdrasilAddress as RustMeshYggAddr,
@@ -221,44 +222,28 @@ impl RustMeshTransport {
     pub async fn encrypt_for_peer(
         &self,
         peer_id: &AgentId,
-        plaintext: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        use crate::mesh::rust_mesh::crypto::{ecies_encrypt, SharedSecret};
-        
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>, Error> {
         let peers = self.peers.read().await;
-        let peer = peers
+        let _ = peers
             .get(peer_id)
-            .ok_or_else(|| "Peer not found".to_string())?;
+            .ok_or_else(|| Error::Mesh("Peer not found".to_string()))?;
 
-        let key_bytes = peer.yggdrasil_addr.as_bytes();
-        let mut shared_bytes = [0u8; 32];
-        shared_bytes[..16].copy_from_slice(key_bytes);
-        shared_bytes[16..].copy_from_slice(key_bytes);
-        let shared = SharedSecret(shared_bytes);
-
-        ecies_encrypt(&shared, plaintext, 1).map_err(|e| e.to_string())
+        Err(Error::Mesh("Encryption not implemented: peer-to-peer encryption uses placeholder crypto that provides no security. Wire to KeyPair for forward-secret session keys.".to_string()))
     }
 
     /// Decrypt a message from a specific peer
     pub async fn decrypt_from_peer(
         &self,
         peer_id: &AgentId,
-        ciphertext: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        use crate::mesh::rust_mesh::crypto::{ecies_decrypt, SharedSecret};
-        
+        _ciphertext: &[u8],
+    ) -> Result<Vec<u8>, Error> {
         let peers = self.peers.read().await;
-        let peer = peers
+        let _ = peers
             .get(peer_id)
-            .ok_or_else(|| "Peer not found".to_string())?;
+            .ok_or_else(|| Error::Mesh("Peer not found".to_string()))?;
 
-        let key_bytes = peer.yggdrasil_addr.as_bytes();
-        let mut shared_bytes = [0u8; 32];
-        shared_bytes[..16].copy_from_slice(key_bytes);
-        shared_bytes[16..].copy_from_slice(key_bytes);
-        let shared = SharedSecret(shared_bytes);
-
-        ecies_decrypt(&shared, ciphertext, 1).map_err(|e| e.to_string())
+        Err(Error::Mesh("Decryption not implemented: peer-to-peer encryption uses placeholder crypto that provides no security. Wire to KeyPair for forward-secret session keys.".to_string()))
     }
 }
 

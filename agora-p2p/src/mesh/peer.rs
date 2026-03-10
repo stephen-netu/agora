@@ -120,7 +120,7 @@ impl MeshManager {
                         relay: true,
                         state_sync: false,
                         collaboration: true,
-                        fuel: true,
+                        mettle: true,
                         dispute: true,
                     },
                     sequence,
@@ -169,8 +169,8 @@ impl MeshManager {
                         match read_message(&mut recv).await {
                             Ok(bytes) => match decode(&bytes) {
                                 Ok(message) => {
-                                    // Trust gate: reject FuelClaim from untrusted peers
-                                    if let AmpMessage::FuelClaim { .. } = &message {
+                                    // Trust gate: reject MettleClaim from untrusted peers
+                                    if let AmpMessage::MettleClaim { .. } = &message {
                                         let trust_state = trust_registry
                                             .read()
                                             .await
@@ -179,10 +179,10 @@ impl MeshManager {
                                             .unwrap_or(TrustState::Untrusted);
                                         
                                         if trust_state != TrustState::Trusted {
-                                            tracing::debug!("Rejected FuelClaim from untrusted peer: {}", peer_id);
+                                            tracing::debug!("Rejected MettleClaim from untrusted peer: {}", peer_id);
                                             let _ = events.send(MeshEvent::Error(
                                                 peer_id.clone(), 
-                                                "rejected FuelClaim: peer not trusted".to_string()
+                                                "rejected MettleClaim: peer not trusted".to_string()
                                             )).await;
                                             return;
                                         }
@@ -275,7 +275,7 @@ impl MeshManager {
                         relay: true,
                         state_sync: false,
                         collaboration: true,
-                        fuel: true,
+                        mettle: true,
                         dispute: true,
                     },
                     sequence: our_sequence,

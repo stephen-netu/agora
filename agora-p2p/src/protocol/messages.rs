@@ -1,5 +1,5 @@
-use sovereign_sdk::AgentId;
 use serde::{Deserialize, Serialize};
+use sovereign_sdk::AgentId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -26,7 +26,7 @@ pub enum AmpMessage {
     },
 
     EventPush {
-        room_id: String,
+        grove_id: String,
         events: Vec<SerializedEvent>,
     },
 
@@ -39,23 +39,23 @@ pub enum AmpMessage {
     },
 
     StateRequest {
-        room_id: String,
+        grove_id: String,
         since_hash: Option<String>,
     },
 
     StateResponse {
-        room_id: String,
+        grove_id: String,
         state_events: Vec<SerializedEvent>,
     },
 
     RelayStore {
         recipient_agent_id: String,
         ciphertext: Vec<u8>,
-        ttl_seconds: u32,
+        expires_at_tick: u32,
     },
 
     RelayFetch {
-        since: u64,
+        since_tick: u64,
     },
 
     CollaborationRequest {
@@ -79,20 +79,20 @@ pub enum AmpMessage {
         correlation_path_snapshot: Vec<String>,
     },
 
-    FuelOffer {
+    MettleOffer {
         offer_id: String,
         amount: u64,
         from: String,
-        expiration_ts: u64,
+        expires_at_tick: u64,
     },
 
-    FuelClaim {
+    MettleClaim {
         offer_id: String,
         amount: u64,
         claimant: String,
     },
 
-    FuelReceipt {
+    MettleReceipt {
         offer_id: String,
         claimed_by: String,
         amount: u64,
@@ -105,12 +105,11 @@ pub enum AmpMessage {
         agent_id: AgentId,
         /// Available addresses for this peer
         addresses: Vec<String>,
-        /// Time-to-live in seconds for this announcement
-        ttl: u64,
+        /// Expiration tick (deterministic sequence number)
+        expires_at_tick: u64,
     },
 
     // ── Phase 7: Dispute Game ─────────────────────────────────────────────────
-
     /// Phase 1: Initiate a dispute against another agent.
     DisputeOpen {
         /// Unique dispute identifier (BLAKE3 hash of initiating event)
@@ -178,7 +177,7 @@ pub struct Capabilities {
     pub relay: bool,
     pub state_sync: bool,
     pub collaboration: bool,
-    pub fuel: bool,
+    pub mettle: bool,
     pub dispute: bool,
 }
 
@@ -193,7 +192,7 @@ pub struct SerializedEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::codec::{encode, decode};
+    use crate::protocol::codec::{decode, encode};
 
     #[test]
     fn test_collaboration_request_roundtrip() {
@@ -209,10 +208,18 @@ mod tests {
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::CollaborationRequest { block_id, content, from, correlation_path } => {
+            AmpMessage::CollaborationRequest {
+                block_id,
+                content,
+                from,
+                correlation_path,
+            } => {
                 assert_eq!(block_id, "block123");
                 assert_eq!(content, b"test content");
-                assert_eq!(from, "0000000000000000000000000000000000000000000000000000000000000001");
+                assert_eq!(
+                    from,
+                    "0000000000000000000000000000000000000000000000000000000000000001"
+                );
                 assert_eq!(correlation_path.len(), 2);
             }
             _ => panic!("wrong variant"),
@@ -224,16 +231,25 @@ mod tests {
         let msg = AmpMessage::CollaborationResponse {
             block_id: "block123".to_string(),
             content: b"response content".to_vec(),
-            agent_id: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+            agent_id: "0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
             proof: Some(b"proof data".to_vec()),
         };
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::CollaborationResponse { block_id, content, agent_id, proof } => {
+            AmpMessage::CollaborationResponse {
+                block_id,
+                content,
+                agent_id,
+                proof,
+            } => {
                 assert_eq!(block_id, "block123");
                 assert_eq!(content, b"response content");
-                assert_eq!(agent_id, "0000000000000000000000000000000000000000000000000000000000000001");
+                assert_eq!(
+                    agent_id,
+                    "0000000000000000000000000000000000000000000000000000000000000001"
+                );
                 assert!(proof.is_some());
             }
             _ => panic!("wrong variant"),
@@ -253,9 +269,17 @@ mod tests {
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::CollaborationRefusal { block_id, from, reason, correlation_path_snapshot } => {
+            AmpMessage::CollaborationRefusal {
+                block_id,
+                from,
+                reason,
+                correlation_path_snapshot,
+            } => {
                 assert_eq!(block_id, "block123");
-                assert_eq!(from, "0000000000000000000000000000000000000000000000000000000000000002");
+                assert_eq!(
+                    from,
+                    "0000000000000000000000000000000000000000000000000000000000000002"
+                );
                 assert_eq!(reason, "loop detected");
                 assert_eq!(correlation_path_snapshot.len(), 1);
             }
@@ -267,14 +291,15 @@ mod tests {
     fn test_capabilities_with_collaboration() {
         // Verify collaboration field round-trips through the Handshake message
         let msg = AmpMessage::Handshake {
-            agent_id: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+            agent_id: "0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
             version: 1,
             capabilities: Capabilities {
                 events: true,
                 relay: true,
                 state_sync: false,
                 collaboration: true,
-                fuel: false,
+                mettle: false,
                 dispute: false,
             },
             sequence: 1,
@@ -287,66 +312,91 @@ mod tests {
                 assert!(capabilities.relay);
                 assert!(!capabilities.state_sync);
                 assert!(capabilities.collaboration);
-                assert!(!capabilities.fuel);
+                assert!(!capabilities.mettle);
             }
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn test_fuel_offer_roundtrip() {
-        let msg = AmpMessage::FuelOffer {
+    fn test_mettle_offer_roundtrip() {
+        let msg = AmpMessage::MettleOffer {
             offer_id: "offer_abc123".to_string(),
             amount: 1000,
             from: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
-            expiration_ts: 1700000000,
+            expires_at_tick: 1700000000,
         };
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::FuelOffer { offer_id, amount, from, expiration_ts } => {
+            AmpMessage::MettleOffer {
+                offer_id,
+                amount,
+                from,
+                expires_at_tick,
+            } => {
                 assert_eq!(offer_id, "offer_abc123");
                 assert_eq!(amount, 1000);
-                assert_eq!(from, "0000000000000000000000000000000000000000000000000000000000000001");
-                assert_eq!(expiration_ts, 1700000000);
+                assert_eq!(
+                    from,
+                    "0000000000000000000000000000000000000000000000000000000000000001"
+                );
+                assert_eq!(expires_at_tick, 1700000000);
             }
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn test_fuel_claim_roundtrip() {
-        let msg = AmpMessage::FuelClaim {
+    fn test_mettle_claim_roundtrip() {
+        let msg = AmpMessage::MettleClaim {
             offer_id: "offer_abc123".to_string(),
             amount: 500,
-            claimant: "0000000000000000000000000000000000000000000000000000000000000002".to_string(),
+            claimant: "0000000000000000000000000000000000000000000000000000000000000002"
+                .to_string(),
         };
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::FuelClaim { offer_id, amount, claimant } => {
+            AmpMessage::MettleClaim {
+                offer_id,
+                amount,
+                claimant,
+            } => {
                 assert_eq!(offer_id, "offer_abc123");
                 assert_eq!(amount, 500);
-                assert_eq!(claimant, "0000000000000000000000000000000000000000000000000000000000000002");
+                assert_eq!(
+                    claimant,
+                    "0000000000000000000000000000000000000000000000000000000000000002"
+                );
             }
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn test_fuel_receipt_roundtrip() {
-        let msg = AmpMessage::FuelReceipt {
+    fn test_mettle_receipt_roundtrip() {
+        let msg = AmpMessage::MettleReceipt {
             offer_id: "offer_abc123".to_string(),
-            claimed_by: "0000000000000000000000000000000000000000000000000000000000000002".to_string(),
+            claimed_by: "0000000000000000000000000000000000000000000000000000000000000002"
+                .to_string(),
             amount: 500,
             signature: b"zk_proof_placeholder".to_vec(),
         };
         let encoded = encode(&msg).expect("encode failed");
         let decoded = decode(&encoded).expect("decode failed");
         match decoded {
-            AmpMessage::FuelReceipt { offer_id, claimed_by, amount, signature } => {
+            AmpMessage::MettleReceipt {
+                offer_id,
+                claimed_by,
+                amount,
+                signature,
+            } => {
                 assert_eq!(offer_id, "offer_abc123");
-                assert_eq!(claimed_by, "0000000000000000000000000000000000000000000000000000000000000002");
+                assert_eq!(
+                    claimed_by,
+                    "0000000000000000000000000000000000000000000000000000000000000002"
+                );
                 assert_eq!(amount, 500);
                 assert_eq!(signature, b"zk_proof_placeholder");
             }
@@ -356,16 +406,17 @@ mod tests {
 
     #[test]
     fn test_capabilities_with_fuel() {
-        // Verify fuel field round-trips through the Handshake message
+        // Verify mettle field round-trips through the Handshake message
         let msg = AmpMessage::Handshake {
-            agent_id: "0000000000000000000000000000000000000000000000000000000000000001".to_string(),
+            agent_id: "0000000000000000000000000000000000000000000000000000000000000001"
+                .to_string(),
             version: 1,
             capabilities: Capabilities {
                 events: true,
                 relay: false,
                 state_sync: true,
                 collaboration: false,
-                fuel: true,
+                mettle: true,
                 dispute: false,
             },
             sequence: 1,
@@ -378,7 +429,7 @@ mod tests {
                 assert!(!capabilities.relay);
                 assert!(capabilities.state_sync);
                 assert!(!capabilities.collaboration);
-                assert!(capabilities.fuel);
+                assert!(capabilities.mettle);
             }
             _ => panic!("wrong variant"),
         }

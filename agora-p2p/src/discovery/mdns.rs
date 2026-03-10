@@ -1,9 +1,13 @@
 use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use std::collections::{BTreeMap, HashMap};
 use tracing::{info, warn, debug};
+
+fn to_hashmap(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
 
 use crate::error::Error;
 use crate::types::Peer;
@@ -82,10 +86,10 @@ impl MdnsDiscovery {
             format!("{}.local.", service_type)
         };
         
-        // S-02 EXCEPTION: mdns-sd library requires HashMap for ServiceInfo API
-        let mut properties = HashMap::new();
-        properties.insert("agent_id".to_string(), agent_id.to_string());
-        
+        // S-02 EXCEPTION: mdns-sd library API requires HashMap for ServiceInfo properties.
+        // Convert BTreeMap to HashMap at the library boundary.
+        let properties = to_hashmap(&[("agent_id", agent_id)]);
+
         ServiceInfo::new(
             &full_service_type,
             instance_name,
@@ -139,11 +143,13 @@ impl MdnsDiscovery {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 
-                let agent_id = AgentId::from_hex(&agent_id_str)
-                    .unwrap_or_else(|_| {
-                        AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000")
-                            .unwrap()
-                    });
+                let agent_id = match AgentId::from_hex(&agent_id_str) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        warn!(agent_id_str = %agent_id_str, error = %e, "Failed to parse AgentId from mDNS - skipping peer");
+                        return Ok(());
+                    }
+                };
                 
                 service_to_agent.write().await.insert(fullname.clone(), agent_id_str.clone());
                 

@@ -11,6 +11,7 @@
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 use tracing::{info, trace};
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
@@ -40,14 +41,13 @@ pub struct PublicKey(pub [u8; 32]);
 pub struct SecretKey(pub [u8; 32]);
 
 // IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation - Phase 2-3
-#[allow(dead_code)]
+#[cfg(test)]
 pub struct KeyPair {
     pub public: PublicKey,
     pub secret: SecretKey,
 }
 
-// IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation - Phase 2-3
-#[allow(dead_code)]
+#[cfg(test)]
 impl KeyPair {
     pub fn generate() -> Result<Self> {
         // IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation
@@ -72,18 +72,6 @@ impl KeyPair {
         Ok(Self {
             public: PublicKey(*public.as_bytes()),
             secret: SecretKey(*secret.as_bytes()),
-        })
-    }
-
-    pub fn from_secret(secret: [u8; 32]) -> Result<Self> {
-        // IMPLEMENTATION_REQUIRED: Forward secrecy with session key rotation
-
-        let secret_key = StaticSecret::from(secret);
-        let public_key = XPublicKey::from(&secret_key);
-
-        Ok(Self {
-            public: PublicKey(*public_key.as_bytes()),
-            secret: SecretKey(secret),
         })
     }
 }
@@ -169,7 +157,7 @@ pub fn ecies_decrypt(
 
 pub struct CryptoProvider {
     sessions: BTreeMap<[u8; 32], SharedSecret>,
-    session_sequence: u64,
+    session_sequence: AtomicU64,
 }
 
 impl CryptoProvider {
@@ -177,13 +165,12 @@ impl CryptoProvider {
         info!(target: "mesh", "Initialized crypto provider");
         Self {
             sessions: BTreeMap::new(),
-            session_sequence: 0,
+            session_sequence: AtomicU64::new(0),
         }
     }
 
-    fn next_sequence(&mut self) -> u64 {
-        self.session_sequence += 1;
-        self.session_sequence
+    fn next_sequence(&self) -> u64 {
+        self.session_sequence.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     pub fn establish_session(
@@ -207,7 +194,7 @@ impl CryptoProvider {
         self.sessions.remove(peer_id)
     }
 
-    pub fn encrypt_to_peer(&mut self, peer_id: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
+    pub fn encrypt_to_peer(&self, peer_id: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
         let sequence = self.next_sequence();
         let shared = *self
             .sessions
@@ -222,7 +209,7 @@ impl CryptoProvider {
             .sessions
             .get(peer_id)
             .ok_or(CryptoError::SessionNotFound)?;
-        let sequence = self.session_sequence;
+        let sequence = self.session_sequence.load(Ordering::SeqCst);
 
         ecies_decrypt(&shared, ciphertext, sequence)
     }

@@ -77,7 +77,7 @@ mod tests {
         );
 
         node_a
-            .broadcast_room_message("test-room", b"hello via yggdrasil")
+            .broadcast_grove_message("test-room", b"hello via yggdrasil")
             .await
             .expect("broadcast from node_a failed");
 
@@ -96,7 +96,7 @@ mod tests {
         assert!(received_b, "node_b should have received a message from node_a");
 
         node_b
-            .broadcast_room_message("test-room", b"response via yggdrasil")
+            .broadcast_grove_message("test-room", b"response via yggdrasil")
             .await
             .expect("broadcast from node_b failed");
 

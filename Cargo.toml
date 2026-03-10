@@ -2,8 +2,6 @@
 resolver = "2"
 members = [
     "agora-p2p",
-    "agora-app",
-    "agora-app/src-tauri",
 ]
 
 [workspace.package]
@@ -13,7 +11,6 @@ license = "AGPL-3.0-or-later"
 repository = "https://github.com/ethee/agora"
 
 [workspace.dependencies]
-agora-app = { path = "agora-app" }
 agora-p2p = { path = "agora-p2p" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

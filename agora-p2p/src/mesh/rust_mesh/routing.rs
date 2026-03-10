@@ -51,7 +51,7 @@ impl RoutingTable {
         }
     }
 
-    fn next_sequence(&mut self) -> u64 {
+    fn next_sequence(&self) -> u64 {
         self.sequence_counter.fetch_add(1, Ordering::SeqCst)
     }
 
@@ -186,21 +186,6 @@ impl RoutingTable {
 impl Default for RoutingTable {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// IMPLEMENTATION_REQUIRED: Iterator for routing table traversal - used in Phase 3 DHT integration
-#[allow(dead_code)]
-pub struct RoutingTableIterator {
-    entries: std::collections::btree_map::Iter<'static, AgentId, RoutingEntry>,
-}
-
-impl RoutingTable {
-    pub fn drain_connected(&mut self) -> impl Iterator<Item = (AgentId, RoutingEntry)> + '_ {
-        self.entries
-            .iter()
-            .filter(|(_, e)| e.is_connected)
-            .map(|(k, v)| (k.clone(), v.clone()))
     }
 }
 

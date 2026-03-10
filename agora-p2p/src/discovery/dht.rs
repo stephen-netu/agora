@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, warn, error};
@@ -31,7 +32,7 @@ pub struct DhtDiscovery {
     node: Arc<RwLock<Option<DhtNode>>>,
     peers: Arc<RwLock<BTreeMap<String, Peer>>>,
     peer_events: mpsc::Sender<DhtPeerEvent>,
-    sequence: Arc<RwLock<u64>>,
+    sequence: Arc<AtomicU64>,
     agent_id: String,
     running: Arc<RwLock<bool>>,
 }
@@ -71,7 +72,7 @@ impl DhtDiscovery {
                 node: Arc::new(RwLock::new(node)),
                 peers: Arc::new(RwLock::new(BTreeMap::new())),
                 peer_events: tx,
-                sequence: Arc::new(RwLock::new(DHT_QUERY_SEQUENCE_START)),
+                sequence: Arc::new(AtomicU64::new(DHT_QUERY_SEQUENCE_START)),
                 agent_id: agent_id.to_string(),
                 running: Arc::new(RwLock::new(false)),
             },
@@ -136,14 +137,10 @@ impl DhtDiscovery {
         node: &Arc<RwLock<Option<DhtNode>>>,
         peers: &Arc<RwLock<BTreeMap<String, Peer>>>,
         _peer_events: &mpsc::Sender<DhtPeerEvent>,
-        sequence: &Arc<RwLock<u64>>,
+        sequence: &Arc<AtomicU64>,
         agent_id: &str,
     ) -> Result<(), Error> {
-        let seq = {
-            let mut s = sequence.write().await;
-            *s += 1;
-            *s
-        };
+        let seq = sequence.fetch_add(1, Ordering::SeqCst);
         
         info!(sequence = seq, "DHT query: bootstrap_refresh - agent_id={}", agent_id);
 
@@ -164,11 +161,7 @@ impl DhtDiscovery {
     }
 
     pub async fn get_peers(&self) -> Vec<Peer> {
-        let seq = {
-            let mut s = self.sequence.write().await;
-            *s += 1;
-            *s
-        };
+        let seq = self.sequence.fetch_add(1, Ordering::SeqCst);
         
         info!(sequence = seq, "DHT query: get_peers - agent_id={}", self.agent_id);
         
@@ -181,11 +174,7 @@ impl DhtDiscovery {
     }
 
     pub async fn get_peer(&self, target_agent_id: &str) -> Option<Peer> {
-        let seq = {
-            let mut s = self.sequence.write().await;
-            *s += 1;
-            *s
-        };
+        let seq = self.sequence.fetch_add(1, Ordering::SeqCst);
         
         info!(sequence = seq, target_agent_id = %target_agent_id, "DHT query: get_peer - agent_id={}", self.agent_id);
         
@@ -202,11 +191,7 @@ impl DhtDiscovery {
     }
 
     pub async fn announce_peer(&self, addresses: Vec<String>, _ttl: u64) -> Result<(), Error> {
-        let seq = {
-            let mut s = self.sequence.write().await;
-            *s += 1;
-            *s
-        };
+        let seq = self.sequence.fetch_add(1, Ordering::SeqCst);
         
         info!(sequence = seq, address_count = addresses.len(), "DHT query: announce_peer - agent_id={}", self.agent_id);
 
@@ -223,9 +208,8 @@ impl DhtDiscovery {
         }
 
         let peer = Peer {
-            agent_id: AgentId::from_hex(&self.agent_id).unwrap_or_else(|_| {
-                AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
-            }),
+            agent_id: AgentId::from_hex(&self.agent_id)
+                .expect("DHT Discovery initialized with invalid agent_id - this is a programming error"),
             addresses: addresses.clone(),
         };
         peers_guard.insert(self.agent_id.clone(), peer);
@@ -236,11 +220,7 @@ impl DhtDiscovery {
     }
 
     pub async fn lookup_peer(&self, target_agent_id: &str) -> Result<Option<Peer>, Error> {
-        let seq = {
-            let mut s = self.sequence.write().await;
-            *s += 1;
-            *s
-        };
+        let seq = self.sequence.fetch_add(1, Ordering::SeqCst);
         
         info!(sequence = seq, target_agent_id = %target_agent_id, "DHT query: lookup_peer - agent_id={}", self.agent_id);
 
@@ -249,8 +229,6 @@ impl DhtDiscovery {
             return Err(Error::Discovery("DHT not initialized".to_string()));
         }
 
-        let _node = node_guard.as_ref().unwrap();
-        
         let peers_guard = self.peers.read().await;
         
         if let Some(peer) = peers_guard.get(target_agent_id) {

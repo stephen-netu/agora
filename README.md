@@ -153,7 +153,7 @@ Agora implements the following Matrix Client-Server API endpoints:
 > - **Encrypted rooms**: Only readable by Agora clients (`agora-app`, `agora-cli`)
 > - **Unencrypted rooms**: Fully compatible with all Matrix clients
 >
-> See [docs/E2E.md](./docs/E2E.md) for detailed technical explanation.
+> See [docs/_archives/E2E.md](./docs/_archives/E2E.md) for detailed technical explanation.
 
 Agora uses its own cryptographic implementation (`agora-crypto`) built from audited primitives:
 

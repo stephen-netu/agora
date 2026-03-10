@@ -209,11 +209,14 @@ impl P2pNode {
                             }
                             MdnsPeerEvent::PeerRemoved(agent_id) => {
                                 info!("Peer removed: {}", agent_id);
-                                let peer_id = AgentId::from_hex(&agent_id)
-                                    .unwrap_or_else(|_| {
-                                        AgentId::from_hex("0000000000000000000000000000000000000000000000000000000000000000").unwrap()
-                                    });
-                                mesh.disconnect(&peer_id).await;
+                                match AgentId::from_hex(&agent_id) {
+                                    Ok(peer_id) => {
+                                        mesh.disconnect(&peer_id).await;
+                                    }
+                                    Err(e) => {
+                                        warn!(agent_id = %agent_id, error = %e, "Failed to parse AgentId for peer removal - skipping");
+                                    }
+                                }
                             }
                         }
                     }
@@ -223,14 +226,14 @@ impl P2pNode {
         });
     }
     
-    pub async fn broadcast_room_message(&self, room_id: &str, message: &[u8]) -> Result<(), Error> {
+    pub async fn broadcast_grove_message(&self, grove_id: &str, message: &[u8]) -> Result<(), Error> {
         // S-02 compliant: use deterministic sequence number instead of wall-clock time
         let sequence = self.sequence_counter.fetch_add(1, Ordering::SeqCst);
         
-        let event_id = format!("{}-{}", room_id, sequence);
+        let event_id = format!("{}-{}", grove_id, sequence);
         
         let msg = AmpMessage::EventPush {
-            room_id: room_id.to_string(),
+            grove_id: grove_id.to_string(),
             events: vec![SerializedEvent {
                 event_id,
                 event_type: "m.room.message".to_string(),
@@ -248,7 +251,7 @@ impl P2pNode {
             }
         }
         
-        info!("Broadcasting message to room {} ({} peers)", room_id, peer_count);
+        info!("Broadcasting message to grove {} ({} peers)", grove_id, peer_count);
         
         Ok(())
     }
@@ -363,6 +366,21 @@ impl P2pNode {
         Ok(())
     }
 
+    pub async fn send_to(
+        &self,
+        peer_id: &str,
+        message: AmpMessage,
+    ) -> Result<(), Error> {
+        let peer = sovereign_sdk::AgentId::from_hex(peer_id)
+            .map_err(|e| Error::Mesh(format!("invalid peer_id: {}", e)))?;
+        self.mesh.send_to(&peer, message).await
+    }
+
+    /// Connect to a peer by address
+    pub async fn connect_to_peer(&self, peer: crate::types::Peer) -> Result<(), Error> {
+        self.mesh.try_connect(&peer).await
+    }
+
     pub fn agent_id(&self) -> &sovereign_sdk::AgentId {
         &self.config.agent_id
     }
@@ -396,10 +414,10 @@ mod tests {
     fn test_loop_detection_check() {
         // The loop detection logic: if own_id appears in correlation_path, reject.
         let own_hex = "aa".repeat(32); // 64-char hex
-        let path_with_self = vec![own_hex.clone()];
+        let path_with_self = std::slice::from_ref(&own_hex);
         assert!(path_with_self.iter().any(|id| id == &own_hex));
 
-        let path_without_self = vec!["bb".repeat(32)];
+        let path_without_self = &["bb".repeat(32)];
         assert!(!path_without_self.iter().any(|id| id == &own_hex));
     }
 

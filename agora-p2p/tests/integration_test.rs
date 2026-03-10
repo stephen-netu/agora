@@ -2,7 +2,7 @@
 
 use agora_p2p::{P2pNode, MeshEvent};
 use agora_p2p::P2pConfig;
-use agora_crypto::AgentId;
+use sovereign_sdk::AgentId;
 use tokio::time::{timeout, Duration};
 
 fn make_agent_id(hex: &str) -> AgentId {
@@ -74,7 +74,7 @@ async fn two_nodes_connect_and_exchange_message() {
     assert!(!peers_a.is_empty(), "node_a should have at least one connected peer");
 
     node_a
-        .broadcast_room_message("test-room", b"hello from A")
+        .broadcast_grove_message("test-room", b"hello from A")
         .await
         .expect("broadcast failed");
 
