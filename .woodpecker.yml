@@ -1,0 +1,53 @@
+# KOS/agora CI — Woodpecker pipeline
+# quinn uses aws-lc-rs which needs cmake + clang on Linux, cmake + NASM on Windows.
+# On Gitea: the sovereign-sdk git dep resolves automatically — no deploy keys needed.
+
+when:
+  - event: push
+  - event: pull_request
+
+steps:
+  # ── Check (Linux / Docker) ──────────────────────────────────────────────────
+  - name: check-linux
+    image: rust:latest
+    commands:
+      - apt-get update -qq
+      - apt-get install -y --no-install-recommends cmake clang llvm pkg-config
+      - cargo check --workspace --locked
+
+  # ── Tests (Linux / Docker) ─────────────────────────────────────────────────
+  - name: test-linux
+    image: rust:latest
+    depends_on: [check-linux]
+    commands:
+      - apt-get update -qq
+      - apt-get install -y --no-install-recommends cmake clang llvm pkg-config
+      - cargo test --workspace --locked
+
+  # ── Clippy (Linux / Docker) ────────────────────────────────────────────────
+  - name: clippy
+    image: rust:latest
+    depends_on: [check-linux]
+    commands:
+      - apt-get update -qq
+      - apt-get install -y --no-install-recommends cmake clang llvm pkg-config
+      - rustup component add clippy
+      - cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── Format check ───────────────────────────────────────────────────────────
+  - name: fmt
+    image: rust:latest
+    commands:
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
+
+  # ── Check (Windows / old laptop agent) ────────────────────────────────────
+  # aws-lc-rs on Windows needs cmake (pre-installed with VS Build Tools) + NASM.
+  # Install NASM once on the Windows agent machine: choco install nasm
+  # then add C:\Program Files\NASM to the machine PATH — do this once, not per-job.
+  - name: check-windows
+    image: windows/nanoserver:ltsc2022
+    labels:
+      platform: windows
+    commands:
+      - cargo check --workspace --locked
