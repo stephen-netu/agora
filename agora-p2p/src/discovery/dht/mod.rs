@@ -7,6 +7,12 @@
 //! S-04: All DHT queries are logged for auditability
 //! S-05: Routing table is bounded to prevent unbounded memory growth
 
+pub mod provider;
+pub mod stub;
+
+pub use provider::{DhtProvider, DhtPeer};
+pub use stub::StubDhtProvider;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

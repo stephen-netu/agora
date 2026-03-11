@@ -12,13 +12,14 @@ mod protocol;
 mod discovery;
 mod mesh;
 mod node;
+pub mod nat;
 
 // Re-export only the public API
 pub use sovereign_sdk::AgentId;
 pub use node::{P2pNode, MeshEvent};
-pub use types::{P2pConfig, TransportMode, Peer, YggdrasilConfig, WanDiscoveryMode, IdentitySource, Multiaddr};
+pub use types::{P2pConfig, TransportMode, Peer, YggdrasilConfig, WanDiscoveryMode, WanConfig, IdentitySource, Multiaddr};
 pub use sovereign_sdk::yggdrasil_addr_from_pubkey;
 pub use transport::quic::QuicConfig;
 pub use protocol::{AmpMessage, SerializedEvent};
-pub use discovery::dht::{DhtDiscovery, DhtPeerEvent};
+pub use discovery::dht::{DhtDiscovery, DhtPeerEvent, DhtProvider, DhtPeer, StubDhtProvider};
 pub use error::Error;

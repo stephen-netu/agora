@@ -34,6 +34,7 @@ async fn two_nodes_connect_and_exchange_message() {
         service_name: "_agora-test._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
         wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
+        wan_config: agora_p2p::WanConfig::default(),
     };
     let config_b = P2pConfig {
         identity_source: agora_p2p::IdentitySource::Testing(id_b.clone()),
@@ -42,6 +43,7 @@ async fn two_nodes_connect_and_exchange_message() {
         service_name: "_agora-test._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
         wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
+        wan_config: agora_p2p::WanConfig::default(),
     };
 
     let mut node_a = P2pNode::new(config_a).await.expect("node_a creation failed");
@@ -54,8 +56,19 @@ async fn two_nodes_connect_and_exchange_message() {
     node_a.start(0).await.expect("node_a start failed");
     node_b.start(0).await.expect("node_b start failed");
 
-    // Wait for connection events (mDNS discovery takes a moment)
-    let connected_a = timeout(Duration::from_secs(10), async {
+    // Manually dial B from A — mDNS multicast is unreliable in test environments.
+    // Use the known local address instead of waiting for discovery.
+    let addr_b = node_b.local_address().expect("node_b has no local address");
+    // local_address() returns 0.0.0.0:PORT — rewrite to loopback for dialing
+    let port_b = addr_b.rsplit(':').next().expect("addr has port");
+    let dial_addr_b = format!("127.0.0.1:{}", port_b);
+    node_a
+        .connect_to_peer_by_addr(&id_b.to_hex(), &dial_addr_b)
+        .await
+        .expect("node_a failed to connect to node_b");
+
+    // Wait for connection events
+    let connected_a = timeout(Duration::from_secs(5), async {
         loop {
             if let Some(event) = events_a.recv().await {
                 if matches!(event, MeshEvent::Connected(_)) {

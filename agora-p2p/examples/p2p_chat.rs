@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         service_name: "_agora._udp.local.".to_string(),
         transport: agora_p2p::TransportMode::Auto,
         wan_discovery: agora_p2p::WanDiscoveryMode::Disabled,
+        wan_config: agora_p2p::WanConfig::default(),
     };
     
     let port = config.listen_port;

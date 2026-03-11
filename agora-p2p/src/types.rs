@@ -115,6 +115,8 @@ pub struct P2pConfig {
     pub transport: TransportMode,
     /// WAN discovery mode
     pub wan_discovery: WanDiscoveryMode,
+    /// WAN discovery configuration (seeds, STUN servers, DHT port)
+    pub wan_config: WanConfig,
 }
 
 impl Default for P2pConfig {
@@ -126,6 +128,7 @@ impl Default for P2pConfig {
             service_name: "_agora._udp.local.".to_string(),
             transport: TransportMode::Auto,
             wan_discovery: WanDiscoveryMode::default(),
+            wan_config: WanConfig::default(),
         }
     }
 }
@@ -147,6 +150,8 @@ pub enum TransportMode {
     Quic(Arc<QuicConfigInner>),
     /// Yggdrasil mesh transport with custom configuration
     Yggdrasil(YggdrasilConfig),
+    /// Pure Rust mesh transport (Yggdrasil-compatible, no external daemon)
+    RustMesh(crate::transport::rust_mesh_transport::RustMeshConfig),
     /// Automatically select transport based on availability
     #[default]
     Auto,
@@ -156,11 +161,56 @@ pub enum TransportMode {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Multiaddr(pub String);
 
+/// WAN discovery configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WanConfig {
+    /// Seed nodes for DHT bootstrap (hostname:port or IP:port)
+    #[serde(default = "default_wan_seeds")]
+    pub seeds: Vec<String>,
+    /// STUN servers for NAT detection
+    #[serde(default = "default_wan_stun_servers")]
+    pub stun_servers: Vec<String>,
+    /// UDP port for DHT (separate from QUIC port)
+    #[serde(default = "default_wan_dht_port")]
+    pub dht_port: u16,
+    /// Enable NAT hole-punching
+    #[serde(default)]
+    pub enable_hole_punch: bool,
+}
+
+fn default_wan_seeds() -> Vec<String> {
+    vec![
+        "seeds.agora0.io:6881".to_string(),
+        "seeds.agora1.io:6881".to_string(),
+        "seeds.agora2.io:6881".to_string(),
+    ]
+}
+
+fn default_wan_stun_servers() -> Vec<String> {
+    vec!["stun.l.google.com:19302".to_string()]
+}
+
+fn default_wan_dht_port() -> u16 {
+    6881
+}
+
+impl Default for WanConfig {
+    fn default() -> Self {
+        Self {
+            seeds: default_wan_seeds(),
+            stun_servers: default_wan_stun_servers(),
+            dht_port: default_wan_dht_port(),
+            enable_hole_punch: false,
+        }
+    }
+}
+
 impl std::fmt::Debug for TransportMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Quic(_) => write!(f, "TransportMode::Quic(...)"),
             Self::Yggdrasil(config) => write!(f, "TransportMode::Yggdrasil({:?})", config),
+            Self::RustMesh(cfg) => write!(f, "TransportMode::RustMesh({:?})", cfg),
             Self::Auto => write!(f, "TransportMode::Auto"),
         }
     }

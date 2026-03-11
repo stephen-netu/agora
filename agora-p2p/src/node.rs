@@ -29,6 +29,11 @@ pub struct P2pNode {
     /// Whether WAN (non-LAN) peer discovery is enabled.
     /// Persisted at the Tauri layer; P2pNode owns the runtime gate.
     wan_discovery_enabled: AtomicBool,
+    connection_scorer: Arc<crate::nat::ConnectionScorer>,
+    /// RustMesh transport, populated when TransportMode::RustMesh is selected
+    rust_mesh_transport: Option<Arc<crate::transport::rust_mesh_transport::RustMeshTransport>>,
+    /// DHT provider for WAN peer discovery (None when WAN discovery is disabled)
+    dht: Option<Arc<dyn crate::discovery::dht::DhtProvider>>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +65,16 @@ impl P2pNode {
                 // Try to bind to Yggdrasil address
                 resolve_yggdrasil_bind_addr(ygg_config)
             }
+            TransportMode::RustMesh(rm_cfg) => {
+                // RustMesh derives its IPv6 address from the agent key;
+                // fall back to QUIC bind until the transport is fully wired.
+                // IMPLEMENTATION_REQUIRED: resolve RustMesh IPv6 bind address
+                let _ = rm_cfg;
+                Some(std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    config.listen_port,
+                ))
+            }
             TransportMode::Auto => {
                 // Auto: try Yggdrasil first, fall back to QUIC
                 if let Some(ygg_addr) = resolve_yggdrasil_bind_addr(&YggdrasilConfig::default()) {
@@ -90,6 +105,26 @@ impl P2pNode {
             mesh_internal_tx,
         ));
         
+        // Initialise RustMesh transport when that mode is selected
+        let rust_mesh_transport = match &config.transport {
+            TransportMode::RustMesh(rm_config) => {
+                // IMPLEMENTATION_REQUIRED: wire RustMesh transport initialisation
+                let _ = rm_config; // suppress unused warning until wired
+                None
+            }
+            _ => None,
+        };
+
+        // Initialise DHT provider when WAN discovery is enabled
+        let dht: Option<Arc<dyn crate::discovery::dht::DhtProvider>> = match &config.wan_discovery {
+            WanDiscoveryMode::Disabled => None,
+            WanDiscoveryMode::Bootstrap(_) | WanDiscoveryMode::Public => {
+                let provider = crate::discovery::dht::StubDhtProvider::new(agent_id.clone());
+                // IMPLEMENTATION_REQUIRED: replace StubDhtProvider with real DHT once crate selected
+                Some(Arc::new(provider) as Arc<dyn crate::discovery::dht::DhtProvider>)
+            }
+        };
+
         // Update config with resolved agent_id
         let config = P2pConfig {
             identity_source: config.identity_source,
@@ -98,10 +133,11 @@ impl P2pNode {
             service_name: config.service_name,
             transport: config.transport,
             wan_discovery: config.wan_discovery,
+            wan_config: config.wan_config,
         };
 
         let wan_discovery = config.wan_discovery.clone();
-        
+
         Ok(Self {
             config,
             transport,
@@ -112,6 +148,9 @@ impl P2pNode {
             mesh_internal_rx: Some(mesh_internal_rx),
             sequence_counter: AtomicU64::new(0),
             wan_discovery_enabled: AtomicBool::new(!matches!(wan_discovery, WanDiscoveryMode::Disabled)),
+            connection_scorer: Arc::new(crate::nat::ConnectionScorer::new()),
+            rust_mesh_transport,
+            dht,
         })
     }
     
@@ -166,12 +205,13 @@ impl P2pNode {
             info!("Incoming connection handler started");
             loop {
                 match transport.accept().await {
-                    Ok((connection, peer_id)) => {
+                    Ok((connection, _cert_peer_id)) => {
                         info!("Accepted incoming connection from {}", connection.remote_addr);
-                        
+                        // mTLS is not used; _cert_peer_id is a placeholder blake3 hash, not a real
+                        // AgentId. Identity is verified at the application layer (mesh handshake).
                         let mesh_clone = mesh.clone();
                         tokio::spawn(async move {
-                            mesh_clone.handle_incoming(connection, Some(peer_id)).await;
+                            mesh_clone.handle_incoming(connection, None).await;
                         });
                     }
                     Err(e) => {
@@ -193,7 +233,8 @@ impl P2pNode {
     ) {
         let mesh = self.mesh.clone();
         let mesh_events_tx = self.mesh_events_tx.clone();
-        
+        let scorer = self.connection_scorer.clone();
+
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -201,10 +242,16 @@ impl P2pNode {
                         match event {
                             MdnsPeerEvent::PeerDiscovered(peer) => {
                                 info!("Discovered peer: {}", peer.agent_id);
-                                
-                                if let Err(e) = mesh.try_connect(&peer).await {
-                                    let err_str = e.to_string();
-                                    let _ = mesh_events_tx.send(MeshEvent::Error(peer.agent_id.to_string(), err_str)).await;
+
+                                match mesh.try_connect(&peer).await {
+                                    Ok(()) => {
+                                        scorer.record_success(&peer.agent_id).await;
+                                    }
+                                    Err(e) => {
+                                        scorer.record_failure(&peer.agent_id).await;
+                                        let err_str = e.to_string();
+                                        let _ = mesh_events_tx.send(MeshEvent::Error(peer.agent_id.to_string(), err_str)).await;
+                                    }
                                 }
                             }
                             MdnsPeerEvent::PeerRemoved(agent_id) => {
@@ -371,6 +418,10 @@ impl P2pNode {
         peer_id: &str,
         message: AmpMessage,
     ) -> Result<(), Error> {
+        if self.rust_mesh_transport.is_some() {
+            // IMPLEMENTATION_REQUIRED: RustMesh send path — encrypt + route via routing table
+            return Err(Error::Transport("RustMesh send path not yet wired".to_string()));
+        }
         let peer = sovereign_sdk::AgentId::from_hex(peer_id)
             .map_err(|e| Error::Mesh(format!("invalid peer_id: {}", e)))?;
         self.mesh.send_to(&peer, message).await
@@ -421,6 +472,16 @@ impl P2pNode {
     /// Returns whether WAN discovery is currently enabled.
     pub fn is_wan_discovery_enabled(&self) -> bool {
         self.wan_discovery_enabled.load(Ordering::SeqCst)
+    }
+
+    /// Returns a shared handle to the ConnectionScorer for this node.
+    pub fn connection_scorer(&self) -> &Arc<crate::nat::ConnectionScorer> {
+        &self.connection_scorer
+    }
+
+    /// Returns the DHT provider handle, if WAN discovery is enabled.
+    pub fn dht(&self) -> Option<&Arc<dyn crate::discovery::dht::DhtProvider>> {
+        self.dht.as_ref()
     }
 }
 

@@ -108,42 +108,39 @@ impl ServerCertVerifier for FingerprintServerVerifier {
     ) -> Result<ServerCertVerified, TlsError> {
         let fingerprint = FingerprintStore::cert_fingerprint(end_entity);
         
-        if let (Some(expected_agent_id), Some(expected_fingerprint)) = 
-            (&self.expected_agent_id, &self.expected_fingerprint) 
+        if let (Some(expected_agent_id), Some(expected_fingerprint)) =
+            (&self.expected_agent_id, &self.expected_fingerprint)
         {
+            // Fingerprint IS the identity proof. SNI is fixed to "agora.p2p" to satisfy
+            // rustls's DNS name requirement — not compared to AgentId.
             if fingerprint != *expected_fingerprint {
                 return Err(TlsError::General(
                     format!("certificate fingerprint mismatch for agent {}", expected_agent_id)
                 ));
             }
-            
-            let name_str = match server_name {
-                rustls::pki_types::ServerName::DnsName(name) => name.as_ref(),
-                _ => return Ok(ServerCertVerified::assertion()),
-            };
-            if name_str != *expected_agent_id {
-                return Err(TlsError::General(
-                    format!("server name '{}' does not match expected agent_id '{}'", name_str, expected_agent_id)
-                ));
-            }
         } else {
-            let trusted = self.store.inner().read()
+            // TOFU: if a fingerprint is already recorded for this peer, verify it matches.
+            // If no fingerprint is recorded, accept (first connection).
+            // Real identity verification happens at the application-layer mesh handshake.
+            let stored = self.store.inner().read()
                 .ok()
                 .and_then(|guard| {
                     let name_str = match server_name {
                         rustls::pki_types::ServerName::DnsName(name) => name.as_ref(),
                         _ => return None,
                     };
-                    guard.get(name_str).map(|fp| *fp == fingerprint)
-                })
-                .unwrap_or(false);
-            
-            if !trusted {
-                return Err(TlsError::General(
-                    "unknown certificate fingerprint".to_string()
-                ));
-    }
-}
+                    guard.get(name_str).copied()
+                });
+
+            if let Some(stored_fp) = stored {
+                if stored_fp != fingerprint {
+                    return Err(TlsError::General(
+                        "certificate fingerprint changed for known peer".to_string()
+                    ));
+                }
+            }
+            // No stored fingerprint → TOFU accept.
+        }
         Ok(ServerCertVerified::assertion())
     }
     

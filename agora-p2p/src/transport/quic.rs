@@ -189,7 +189,10 @@ impl QuicTransport {
             self.config.keepalive_interval,
         )?;
         
-        let connecting = self.endpoint.connect_with(client_config, addr, &peer_id.to_string())
+        // SNI must be a valid DNS name; rustls rejects raw hex strings.
+        // Peer identity is verified by certificate fingerprint (FingerprintServerVerifier),
+        // so the SNI value is used only to satisfy the TLS handshake — not for security.
+        let connecting = self.endpoint.connect_with(client_config, addr, "agora.p2p")
             .map_err(|e| Error::Transport(format!("connect error: {}", e)))?;
         let connection = connecting.await
             .map_err(|e| Error::Transport(format!("connection failed: {}", e)))?;
