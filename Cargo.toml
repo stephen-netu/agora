@@ -37,7 +37,7 @@ sha2 = "0.10"
 dirs = "5"
 directories = "5"
 base64 = "0.22"
-sovereign-sdk = { path = "../../SOVEREIGN/lib/sovereign-sdk" }
+sovereign-sdk = { path = "../../SOVEREIGN/.worktrees/p2p-track-b/lib/sovereign-sdk" }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-fs = "2"
