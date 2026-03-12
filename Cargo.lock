@@ -561,7 +561,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -764,6 +764,7 @@ dependencies = [
 [[package]]
 name = "i0-kernel-contracts"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "async-trait",
  "blake3",
@@ -781,6 +782,7 @@ dependencies = [
 [[package]]
 name = "i2-identity"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1187,7 +1189,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -1227,9 +1229,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.2",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1475,7 +1477,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1695,6 +1697,7 @@ dependencies = [
 [[package]]
 name = "sovereign-crypto-agreement"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "chacha20poly1305",
  "ed25519-dalek",
@@ -1709,6 +1712,7 @@ dependencies = [
 [[package]]
 name = "sovereign-crypto-group"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "base64",
  "blake3",
@@ -1728,6 +1732,7 @@ dependencies = [
 [[package]]
 name = "sovereign-crypto-ratchet"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "aes-gcm",
  "blake3",
@@ -1746,6 +1751,7 @@ dependencies = [
 [[package]]
 name = "sovereign-sdk"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "i0-kernel-contracts",
  "i2-identity",
@@ -1761,6 +1767,7 @@ dependencies = [
 [[package]]
 name = "sovereign-sigchain"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "blake3",
  "ciborium",
@@ -2161,7 +2168,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -2670,6 +2677,7 @@ dependencies = [
 [[package]]
 name = "x0-audit"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "chrono",
  "hex",
@@ -2681,6 +2689,7 @@ dependencies = [
 [[package]]
 name = "x0-errors"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -2690,6 +2699,7 @@ dependencies = [
 [[package]]
 name = "x0-foundation"
 version = "0.1.0"
+source = "git+https://github.com/stephen-netu/sovra.git?branch=main#8dca3ea37c716064617e86d9db5ecae9b111056f"
 dependencies = [
  "anyhow",
  "async-trait",

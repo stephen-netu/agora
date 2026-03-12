@@ -1,0 +1,21 @@
+# Build configuration for KOS/Agora workspace
+# To enable sccache caching: brew install sccache && export RUSTC_WRAPPER=sccache
+
+[build]
+# Enable parallel compilation
+jobs = 8
+
+# Uncomment when sccache is installed:
+# rustc-wrapper = "sccache"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+# Optimized release builds - adjusted from full LTO
+opt-level = 3
+lto = "thin"           # Changed from true - much faster, minimal quality loss
+codegen-units = 16     # Changed from 1 - enables parallel codegen
+strip = true
+panic = "abort"

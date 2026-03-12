@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "rust-analyzer": {
+      "command": "npx",
+      "args": ["-y", "@pulsemcp/rust-analyzer"],
+      "description": "Rust Analyzer LSP integration - code analysis, refactoring for Agora Rust codebase",
+      "env": {
+        "RA_PROJECT_ROOT": "/Users/netu/Projects/KOS/agora"
+      }
+    },
+    "mcp-sql": {
+      "command": "mcp-sql",
+      "args": ["--databases", "sqlite:///tmp/agora-state.db"],
+      "description": "Database connectivity for Agora state management - SQLite/PostgreSQL/MySQL support",
+      "env": {
+        "MCP_SQL_READONLY": "false"
+      }
+    },
+    "security-mcp": {
+      "command": "security-mcp",
+      "args": [],
+      "description": "Security scanning - prompt-injection screening and PII detection (alpha quality)",
+      "env": {
+        "SECURITY_MCP_STRICT": "false"
+      }
+    }
+  }
+}
